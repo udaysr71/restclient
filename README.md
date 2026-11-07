@@ -3,6 +3,13 @@
 A lightweight, standalone desktop REST client written in Java. One executable JAR, no accounts,
 no cloud — everything is stored as plain JSON in `~/.restclient`.
 
+> **A hobby project, built with Claude.** This app was designed and written in conversation with
+> [Claude](https://claude.ai) (Anthropic's AI assistant): wireframes, code, tests and this README.
+> It is **not meant for serious or production work**. It's a personal tool and an experiment in what a
+> dependency-free Swing app can look like. That said, **it works**: it sends real requests, keeps your
+> collections and environments, and has unit tests and an automated UI check behind it. Use it, poke at
+> it, and keep a backup of anything you care about in `~/.restclient`.
+
 **Zero third-party dependencies.** Everything — the look and feel, icons, code editor, JSON library and
 test kit — is in this repository, and the build needs nothing but a JDK. See [Dependencies](#dependencies).
 
@@ -304,3 +311,32 @@ are listed first when installed. Changes apply instantly and keep the zoom level
 The UI font is San Francisco on macOS and Segoe UI on Windows; on Linux it's Segoe UI if installed, else
 Inter, Cantarell, Ubuntu, Noto Sans, Open Sans, DejaVu Sans or Liberation Sans. Text is antialiased with the
 desktop's own hints. Code uses SF Mono, Menlo, JetBrains Mono, Cascadia Mono, Consolas or DejaVu Sans Mono.
+
+## Credits
+
+**Made by** [udaysr71](https://github.com/udaysr71), with [Claude](https://claude.ai) by
+[Anthropic](https://www.anthropic.com) as a pair programmer. Claude wrote most of the code, tests and
+docs; the ideas, direction, testing on real machines and every "this still looks off" came from a human.
+
+**Inspiration (no code copied, nothing bundled):**
+
+- [FlatLaf](https://www.formdev.com/flatlaf/) by FormDev Software (Apache License 2.0). The look and
+  feel's visual design is modelled on it; the implementation is written from scratch on Swing's Basic
+  look and feel. See `NOTICE`.
+- [Apple Human Interface Guidelines](https://developer.apple.com/design/human-interface-guidelines/)
+  for spacing, menus, focus behaviour and motion.
+- [Practical UI](https://www.practical-ui.com/) by Adham Dannaway, and a UI/UX design guide, used for
+  the review passes on layout, contrast, wording and actions.
+- [Solarized](https://ethanschoonover.com/solarized/) by Ethan Schoonover (MIT) for the Solarized Sepia
+  and Solarized Dark colour schemes, adjusted where needed to meet WCAG AA contrast.
+- [Postman](https://www.postman.com/) and [Insomnia](https://insomnia.rest/) for what a REST client is
+  expected to do.
+
+**Readable fonts.** The font pickers list these first if you've installed them; none are shipped with
+the app: [Atkinson Hyperlegible](https://www.brailleinstitute.org/freefont/) (Braille Institute),
+[Lexend](https://www.lexend.com/), [OpenDyslexic](https://opendyslexic.org/) (Abbie Gonzalez) and
+[JetBrains Mono](https://www.jetbrains.com/lp/mono/).
+
+**Platform.** Built entirely on the JDK (Swing, Java2D, `java.net.http`). Thanks to the OpenJDK
+project for a standard library big enough to make zero dependencies possible.
+
