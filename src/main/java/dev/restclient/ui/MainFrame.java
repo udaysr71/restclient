@@ -1,0 +1,1456 @@
+package dev.restclient.ui;
+
+import dev.restclient.curl.CurlExporter;
+import dev.restclient.curl.CurlParseException;
+import dev.restclient.curl.CurlParser;
+import dev.restclient.http.ResponseData;
+import dev.restclient.model.ApiCollection;
+import dev.restclient.model.CollectionNode;
+import dev.restclient.model.Environment;
+import dev.restclient.model.HistoryEntry;
+import dev.restclient.model.HttpMethod;
+import dev.restclient.model.RequestDef;
+import dev.restclient.model.Session;
+import dev.restclient.model.Settings;
+import dev.restclient.model.Variable;
+import dev.restclient.vars.VariableResolver;
+
+import javax.swing.AbstractAction;
+import javax.swing.Action;
+import javax.swing.ButtonGroup;
+import javax.swing.Icon;
+import javax.swing.JButton;
+import javax.swing.JComponent;
+import javax.swing.JFrame;
+import javax.swing.JLabel;
+import javax.swing.JMenu;
+import javax.swing.JMenuBar;
+import javax.swing.JMenuItem;
+import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
+import javax.swing.JRadioButtonMenuItem;
+import javax.swing.JScrollPane;
+import javax.swing.JSplitPane;
+import javax.swing.JTable;
+import javax.swing.KeyStroke;
+import javax.swing.SwingUtilities;
+import javax.swing.Timer;
+import javax.swing.WindowConstants;
+import javax.swing.text.DefaultEditorKit;
+import java.awt.BorderLayout;
+import java.awt.CardLayout;
+import java.awt.Component;
+import java.awt.Desktop;
+import java.awt.Dimension;
+import java.awt.FlowLayout;
+import java.awt.Font;
+import java.awt.Graphics;
+import java.awt.KeyboardFocusManager;
+import java.awt.Rectangle;
+import java.awt.Toolkit;
+import java.awt.datatransfer.StringSelection;
+import java.awt.event.ActionEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.LinkedHashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+/** The main window: toolbar, sidebar, request tabs, status bar, menus and shortcuts. */
+public class MainFrame extends JFrame implements VarSupport.Actions {
+    private final AppContext ctx;
+    private final Sidebar sidebar;
+    private final JSplitPane split;
+    /** Light/dark switch in the toolbar; right-click for "Match System". */
+    private final JButton themeToggle = new JButton();
+    private final java.util.Map<Settings.ThemeMode, JRadioButtonMenuItem> appearanceItems = new java.util.EnumMap<>(Settings.ThemeMode.class);
+    private final CardLayout contentCards = new CardLayout();
+    private final JPanel content = new JPanel(contentCards);
+    private final TabStrip tabs = new TabStrip();
+    private final StatusBar statusBar;
+    /** Environment picker; draws its own chevron because "▾" is missing from many UI fonts. */
+    private final JButton envButton = new JButton() {
+        private final Icon chevron = new dev.restclient.ui.laf.LafIcons.Chevron(
+                dev.restclient.ui.laf.LafIcons.Direction.DOWN, 12, Theme::secondary);
+
+        @Override
+        public java.awt.Insets getInsets() {
+            java.awt.Insets i = super.getInsets();
+            return new java.awt.Insets(i.top, i.left, i.bottom, i.right + chevron.getIconWidth() + 6);
+        }
+
+        @Override
+        protected void paintComponent(java.awt.Graphics g) {
+            super.paintComponent(g);
+            java.awt.Insets i = super.getInsets();
+            chevron.paintIcon(this, g, getWidth() - i.right - chevron.getIconWidth(), (getHeight() - chevron.getIconHeight()) / 2);
+        }
+    };
+    private final JLabel breadcrumb = new JLabel();
+    private final Map<String, Action> actions = new LinkedHashMap<>();
+    private final LinkedList<String> recent = new LinkedList<>();
+    private int sidebarWidth = 280;
+    private boolean sidebarVisible = true;
+
+    public MainFrame(AppContext ctx) {
+        super("REST Client");
+        this.ctx = ctx;
+        ctx.setFrame(this);
+        setIconImages(Theme.appIcons());
+        setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
+        setMinimumSize(new Dimension(820, 560));
+
+        if (Platform.isMac()) {
+            getRootPane().putClientProperty("apple.awt.fullWindowContent", true);
+            getRootPane().putClientProperty("apple.awt.transparentTitleBar", true);
+            getRootPane().putClientProperty("apple.awt.windowTitleVisible", false);
+        }
+
+        statusBar = new StatusBar(ctx, () -> openSettings(SettingsDialog.CERTIFICATES));
+        sidebar = new Sidebar(ctx, this);
+        buildTabs();
+        content.add(new EmptyStatePanel(this), "empty");
+        content.add(tabs, "tabs");
+
+        split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, sidebar, content);
+        split.setDividerSize(1);
+        split.setBorder(null);
+        split.setContinuousLayout(true);
+        split.setDividerLocation(sidebarWidth);
+
+        JPanel root = new JPanel(new BorderLayout());
+        root.add(buildToolbar(), BorderLayout.NORTH);
+        root.add(split, BorderLayout.CENTER);
+        root.add(statusBar, BorderLayout.SOUTH);
+        setContentPane(root);
+
+        buildActions();
+        WindowChrome.install(this, buildMenuBar());
+        installMacHandlers();
+
+        ctx.repo.addListener(change -> SwingUtilities.invokeLater(() -> {
+            switch (change) {
+                case COLLECTIONS -> sidebar.collections().rebuild();
+                case ENVIRONMENTS -> {
+                    updateEnvButton();
+                    refreshVariables();
+                }
+                case HISTORY -> sidebar.history().rebuild();
+                case SETTINGS -> refreshStatus();
+            }
+        }));
+        Theme.onChange(() -> {
+            updateEnvButton();
+            refreshStatus();
+            repaint();
+        });
+
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowOpened(WindowEvent e) {
+                // Start where work happens: the URL of the open request, not the sidebar filter.
+                RequestTab t = currentRequestTab();
+                if (t != null) t.focusUrl();
+                else {
+                    content.setFocusable(true);
+                    content.requestFocusInWindow();
+                }
+            }
+
+            @Override
+            public void windowClosing(WindowEvent e) {
+                quit();
+            }
+        });
+        new Timer(30_000, e -> saveSession()).start();
+        watchSystemAppearance();
+
+        restoreSession();
+        syncAppearanceControls();
+        updateEnvButton();
+        updateContentCard();
+        for (String w : ctx.repo.loadWarnings()) status(w, null, null);
+    }
+
+    // ---- layout ----------------------------------------------------------------------------
+
+    private JComponent buildToolbar() {
+        JPanel bar = new JPanel(new BorderLayout(10, 0)) {
+            @Override
+            protected void paintComponent(Graphics g) {
+                g.setColor(Theme.toolbarBg());
+                g.fillRect(0, 0, getWidth(), getHeight());
+                g.setColor(Theme.separator());
+                g.fillRect(0, getHeight() - 1, getWidth(), 1);
+            }
+        };
+        bar.setBorder(Ui.pad(Platform.isMac() ? 8 : 6, Platform.isMac() ? 80 : 10, Platform.isMac() ? 8 : 6, 12));
+        JPanel left = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        left.add(Ui.toolbarButton(Icons.get("sidebar"), "Toggle sidebar (" + Keys.label(Keys.TOGGLE_SIDEBAR) + ")", e -> toggleSidebar()));
+        breadcrumb.setFont(breadcrumb.getFont().deriveFont(Font.BOLD));
+        left.add(breadcrumb);
+        bar.add(left, BorderLayout.WEST);
+
+        JPanel right = Ui.transparent(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        envButton.addActionListener(e -> showEnvironmentMenu());
+        envButton.setRequestFocusEnabled(false);
+        envButton.setToolTipText("Switch environment (" + Keys.label(Keys.SWITCH_ENV) + ")");
+        themeToggle.putClientProperty("JButton.buttonType", "toolBarButton");
+        themeToggle.setRequestFocusEnabled(false);
+        themeToggle.addActionListener(e -> toggleAppearance());
+        themeToggle.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mousePressed(MouseEvent e) {
+                if (e.isPopupTrigger()) appearanceMenu(e);
+            }
+
+            @Override
+            public void mouseReleased(MouseEvent e) {
+                if (e.isPopupTrigger()) appearanceMenu(e);
+            }
+        });
+        right.add(themeToggle);
+        right.add(envButton);
+        JButton palette = new JButton("Search or run a command") {
+            @Override
+            public Dimension getPreferredSize() {
+                Dimension d = super.getPreferredSize();
+                int hintW = getComponentCount() > 0 ? getComponent(0).getPreferredSize().width : 0;
+                return new Dimension(Math.max(Theme.scaled(280), d.width + hintW + 16), d.height);
+            }
+        };
+        palette.setIcon(Icons.get("search", 14));
+        palette.setHorizontalAlignment(JButton.LEFT);
+        palette.addActionListener(e -> openPalette());
+        palette.setLayout(new BorderLayout());
+        JLabel hint = Ui.small(Keys.label(Keys.PALETTE) + " ");
+        palette.add(hint, BorderLayout.EAST);
+        palette.setRequestFocusEnabled(false);
+        right.add(palette);
+        bar.add(right, BorderLayout.EAST);
+
+        if (Platform.isMac()) {
+            // Dragging the unified toolbar moves the window, like a native title bar.
+            MouseAdapter drag = new MouseAdapter() {
+                private java.awt.Point start;
+
+                @Override
+                public void mousePressed(MouseEvent e) {
+                    start = e.getPoint();
+                }
+
+                @Override
+                public void mouseDragged(MouseEvent e) {
+                    if (start == null || (getExtendedState() & MAXIMIZED_BOTH) != 0) return;
+                    java.awt.Point p = getLocation();
+                    setLocation(p.x + e.getX() - start.x, p.y + e.getY() - start.y);
+                }
+
+                @Override
+                public void mouseClicked(MouseEvent e) {
+                    if (e.getClickCount() == 2) setExtendedState(getExtendedState() ^ MAXIMIZED_BOTH);
+                }
+            };
+            bar.addMouseListener(drag);
+            bar.addMouseMotionListener(drag);
+        }
+        return bar;
+    }
+
+    private void buildTabs() {
+        tabs.setCloseHandler(this::closeTab);
+        tabs.setTabMenuProvider(this::tabMenu);
+        JButton plus = Ui.toolbarButton(Icons.get("plus", 14), "New tab (" + Keys.label(Keys.NEW_TAB) + ")", e -> newTab());
+        tabs.setTrailingComponent(plus);
+        tabs.addChangeListener(e -> updateBreadcrumb());
+    }
+
+    /** Custom tab label: colored method, name and an unsaved-changes dot. */
+    private static final class TabHeader extends JPanel {
+        private final JLabel method = new JLabel();
+        private final JLabel title = new JLabel();
+        private final JLabel dot = new JLabel(Ui.dot(Theme::accent, 7));
+
+        TabHeader() {
+            setLayout(new javax.swing.BoxLayout(this, javax.swing.BoxLayout.X_AXIS));
+            setOpaque(false);
+            method.setFont(Theme.mono(11f).deriveFont(Font.BOLD));
+            add(method);
+            add(Ui.hgap(6));
+            add(title);
+            add(Ui.hgap(6));
+            add(dot);
+        }
+
+        void update(HttpMethod m, String name, boolean dirty, boolean history) {
+            method.setText(m == null ? "" : m.shortLabel());
+            method.setForeground(Theme.methodColor(m));
+            String n = name == null || name.isBlank() ? "Untitled" : name;
+            title.setText(n.length() > 28 ? n.substring(0, 27) + "…" : n);
+            title.setFont(title.getFont().deriveFont(history ? Font.ITALIC : Font.PLAIN));
+            dot.setVisible(dirty);
+            revalidate();
+        }
+    }
+
+    private void updateContentCard() {
+        contentCards.show(content, tabs.getTabCount() == 0 ? "empty" : "tabs");
+        updateBreadcrumb();
+    }
+
+    /**
+     * Keeps commands honest: Save is only offered when there's something to save (an edited request, or one that
+     * was never saved), and request commands are off when no request is open. A command that's available but
+     * does nothing suggests the wrong thing.
+     */
+    private void updateActionStates() {
+        if (actions.isEmpty()) return;
+        RequestTab t = currentRequestTab();
+        boolean req = t != null;
+        enable("save", req && (t.isDirty() || !t.isSaved()));
+        enable("saveAs", req);
+        for (String id : new String[]{"send", "copyCurl", "copyCurlVars", "focusUrl", "toggleTls", "find", "duplicateTab"}) {
+            enable(id, req);
+        }
+        enable("close", tabs.getTabCount() > 0);
+        enable("closeOthers", tabs.getTabCount() > 1);
+        enable("closeAll", tabs.getTabCount() > 0);
+        enable("nextTab", tabs.getTabCount() > 1);
+        enable("prevTab", tabs.getTabCount() > 1);
+        enable("reopenTab", !closedTabs.isEmpty());
+    }
+
+    private void enable(String id, boolean on) {
+        javax.swing.Action a = actions.get(id);
+        if (a != null) a.setEnabled(on);
+    }
+
+    private void updateBreadcrumb() {
+        updateActionStates();
+        Component c = tabs.getSelectedComponent();
+        String text = "";
+        if (c instanceof RequestTab t) {
+            ApiCollection col = ctx.repo.collection(t.collectionId());
+            text = col != null && t.nodeId() != null ? col.pathTo(t.nodeId()).replace(" › ", "  /  ") : "Not saved to a collection";
+            setTitle(t.title() + " — REST Client");
+        } else if (c instanceof HistoryTab) {
+            text = "History";
+            setTitle("History — REST Client");
+        } else {
+            setTitle("REST Client");
+        }
+        breadcrumb.setText(text);
+        // A path is information (strong); "not saved" is a status (quiet), so they don't look alike.
+        boolean status = text.startsWith("Not saved");
+        Theme.fg(breadcrumb, status ? Theme::secondary : Theme::text);
+        breadcrumb.setFont(breadcrumb.getFont().deriveFont(status ? Font.PLAIN : Font.BOLD));
+    }
+
+    private Motion.Handle sidebarAnim;
+
+    /** Shows or hides the sidebar, sliding it in or out. */
+    private void toggleSidebar() {
+        if (sidebarAnim != null) {
+            sidebarAnim.stop();
+            sidebarAnim = null;
+        }
+        if (sidebarVisible) {
+            sidebarWidth = split.getDividerLocation();
+            int from = sidebarWidth;
+            sidebarVisible = false;
+            if (!Motion.enabled()) {
+                sidebar.setVisible(false);
+                return;
+            }
+            sidebarAnim = Motion.animate(180, t -> split.setDividerLocation((int) Math.round(from * (1 - t))), () -> {
+                sidebar.setVisible(false);
+                sidebarAnim = null;
+            });
+        } else {
+            sidebarVisible = true;
+            sidebar.setVisible(true);
+            if (!Motion.enabled()) {
+                split.setDividerLocation(sidebarWidth);
+                return;
+            }
+            int to = sidebarWidth;
+            split.setDividerLocation(0);
+            sidebarAnim = Motion.animate(200, t -> split.setDividerLocation((int) Math.round(to * t)), () -> {
+                split.setDividerLocation(to);
+                sidebarAnim = null;
+            });
+        }
+    }
+
+    public void showSidebar(String tab) {
+        if (!sidebarVisible) toggleSidebar();
+        sidebar.showTab(tab);
+    }
+
+    // ---- environment picker ----------------------------------------------------------------
+
+    private void updateEnvButton() {
+        Environment env = ctx.activeEnvironment();
+        Icon dot = Ui.dot(() -> env == null ? null : Theme.hex(env.color, Theme.accent()), 9);
+        envButton.setIcon(dot);
+        String sec = toHex(Theme.secondary());
+        envButton.setText("<html><span style='color:" + sec + "'>Environment</span>&nbsp; <b>"
+                + Ui.escape(env == null ? "None" : env.name) + "</b></html>");
+    }
+
+    private static String toHex(java.awt.Color c) {
+        return String.format("#%02x%02x%02x", c.getRed(), c.getGreen(), c.getBlue());
+    }
+
+    private void showEnvironmentMenu() {
+        JPopupMenu m = new JPopupMenu();
+        ButtonGroup g = new ButtonGroup();
+        Environment active = ctx.activeEnvironment();
+        JRadioButtonMenuItem none = new JRadioButtonMenuItem("No environment", active == null);
+        none.addActionListener(e -> switchEnvironment(null));
+        g.add(none);
+        m.add(none);
+        for (Environment env : ctx.repo.environments()) {
+            JRadioButtonMenuItem i = new JRadioButtonMenuItem(env.name, Ui.dot(() -> Theme.hex(env.color, Theme.accent()), 9), env == active);
+            i.addActionListener(e -> switchEnvironment(env));
+            g.add(i);
+            m.add(i);
+        }
+        m.addSeparator();
+        JMenuItem manage = new JMenuItem("Manage Environments…");
+        manage.addActionListener(e -> showEnvironments(null, null, false));
+        m.add(manage);
+        if (envButton.isShowing()) Ui.showBelow(m, envButton);
+    }
+
+    private void switchEnvironment(Environment env) {
+        ctx.repo.setActiveEnvironment(env);
+        status(env == null ? "No environment selected" : "Switched to " + env.name, null, null);
+    }
+
+    public void showEnvironments(String scopeId, String varName, boolean define) {
+        EnvironmentDialog.open(this, ctx, scopeId, varName, define);
+    }
+
+    @Override
+    public void editVariable(String name) {
+        showEnvironments(null, name, false);
+    }
+
+    @Override
+    public void defineVariable(String name) {
+        showEnvironments(null, name, true);
+    }
+
+    public VariableResolver currentResolver() {
+        RequestTab t = currentRequestTab();
+        return ctx.resolverFor(t == null ? null : t.collectionId());
+    }
+
+    public void variablesChanged() {
+        updateEnvButton();
+        refreshVariables();
+    }
+
+    private void refreshVariables() {
+        for (RequestTab t : requestTabs()) t.refreshVariables();
+    }
+
+    // ---- tabs ------------------------------------------------------------------------------
+
+    private List<RequestTab> requestTabs() {
+        List<RequestTab> out = new ArrayList<>();
+        for (int i = 0; i < tabs.getTabCount(); i++) if (tabs.getComponentAt(i) instanceof RequestTab t) out.add(t);
+        return out;
+    }
+
+    public RequestTab currentRequestTab() {
+        return tabs.getSelectedComponent() instanceof RequestTab t ? t : null;
+    }
+
+    private RequestTab addTab(RequestDef r, String collectionId, String nodeId, RequestDef saved, boolean select) {
+        RequestTab t = new RequestTab(ctx, this, r, collectionId, nodeId, saved);
+        tabs.addTab(r.name, t);
+        int i = tabs.indexOfComponent(t);
+        tabs.setTabComponentAt(i, new TabHeader());
+        tabStateChanged(t);
+        if (select) tabs.setSelectedIndex(i);
+        updateContentCard();
+        return t;
+    }
+
+    public void tabStateChanged(RequestTab t) {
+        int i = tabs.indexOfComponent(t);
+        if (i < 0) return;
+        if (tabs.getTabComponentAt(i) instanceof TabHeader h) h.update(t.method(), t.title(), t.isDirty(), false);
+        updateActionStates();
+        tabs.setToolTipTextAt(i, t.title() + (t.isDirty() ? " — unsaved changes" : ""));
+        if (tabs.getSelectedIndex() == i) updateBreadcrumb();
+    }
+
+    public void newTab() {
+        RequestDef r = new RequestDef();
+        r.name = "Untitled request";
+        addTab(r, currentCollectionIdForNew(), null, null, true).focusUrl();
+    }
+
+    private String currentCollectionIdForNew() {
+        RequestTab t = currentRequestTab();
+        return t == null ? null : t.collectionId();
+    }
+
+    /** Recently closed request tabs, newest first, so a mistaken close is one shortcut away from undone. */
+    private final java.util.Deque<ClosedTab> closedTabs = new java.util.ArrayDeque<>();
+
+    private record ClosedTab(RequestDef draft, String collectionId, String nodeId, RequestDef saved, int index) {
+    }
+
+    private void rememberClosed(RequestTab t, int index) {
+        closedTabs.push(new ClosedTab(t.draft().copy(), t.collectionId(), t.nodeId(), t.savedCopy(), index));
+        while (closedTabs.size() > 20) closedTabs.removeLast();
+    }
+
+    /** Reopens the most recently closed tab where it was, including any edits it had when it closed. */
+    public void reopenClosedTab() {
+        ClosedTab c = closedTabs.poll();
+        if (c == null) {
+            status("No recently closed tabs", null, null);
+            return;
+        }
+        // If the saved request was deleted meanwhile, reopen it as an unsaved copy.
+        String nodeId = c.nodeId();
+        String colId = c.collectionId();
+        ApiCollection col = ctx.repo.collection(colId);
+        if (nodeId != null && (col == null || col.find(nodeId) == null)) nodeId = null;
+        RequestTab t = addTab(c.draft(), colId, nodeId, nodeId == null ? null : c.saved(), true);
+        int at = Math.min(c.index(), tabs.getTabCount() - 1);
+        tabs.moveTab(tabs.indexOfComponent(t), at);
+        tabs.setSelectedIndex(at);
+        updateActionStates();
+    }
+
+    public void closeTab(int i) {
+        if (i < 0 || i >= tabs.getTabCount()) return;
+        Component c = tabs.getComponentAt(i);
+        if (c instanceof RequestTab t) {
+            if (t.isDirty()) {
+                tabs.setSelectedIndex(i);
+                Ui.SaveChoice choice = Ui.askSave(this, t.title());
+                if (choice == Ui.SaveChoice.CANCEL) return;
+                if (choice == Ui.SaveChoice.SAVE && !saveTab(t, false)) return;
+            }
+            t.cancel();
+            rememberClosed(t, i);
+        }
+        tabs.removeTabAt(i);
+        updateContentCard();
+        focusAfterClose();
+    }
+
+    /** Keyboard focus lands somewhere useful after closing tabs, so shortcuts keep working. */
+    private void focusAfterClose() {
+        RequestTab cur = currentRequestTab();
+        if (cur != null) cur.focusUrl();
+        else {
+            content.setFocusable(true);
+            content.requestFocusInWindow();
+        }
+    }
+
+    /** Right-click menu for a tab: everything you'd do to tabs, next to the tab it acts on. */
+    private javax.swing.JPopupMenu tabMenu(int index) {
+        if (index < 0 || index >= tabs.getTabCount()) return null;
+        tabs.setSelectedIndex(index);
+        RequestTab t = tabs.getComponentAt(index) instanceof RequestTab rt ? rt : null;
+        int n = tabs.getTabCount();
+        javax.swing.JPopupMenu m = new javax.swing.JPopupMenu();
+        m.add(menuItem("New Tab", Keys.NEW_TAB, true, this::newTab));
+        m.add(menuItem("Duplicate Tab", null, t != null, () -> duplicateTab(t)));
+        m.addSeparator();
+        m.add(menuItem("Save", Keys.SAVE, t != null && (t.isDirty() || !t.isSaved()), () -> saveTab(t, false)));
+        m.add(menuItem("Rename…", null, t != null, () -> t.rename()));
+        m.add(menuItem("Copy as cURL", Keys.COPY_CURL, t != null, () -> t.copyAsCurl(true)));
+        m.addSeparator();
+        m.add(menuItem("Close", Keys.CLOSE_TAB, true, () -> closeTab(index)));
+        m.add(menuItem("Close Other Tabs", null, n > 1, () -> closeTabs(i -> i != index)));
+        m.add(menuItem("Close Tabs to the Left", null, index > 0, () -> closeTabs(i -> i < index)));
+        m.add(menuItem("Close Tabs to the Right", null, index < n - 1, () -> closeTabs(i -> i > index)));
+        boolean anySaved = false;
+        for (RequestTab x : requestTabs()) anySaved |= !x.isDirty();
+        m.add(menuItem("Close Unmodified Tabs", null, anySaved, () -> closeTabs(i ->
+                tabs.getComponentAt(i) instanceof RequestTab x && !x.isDirty())));
+        m.add(menuItem("Close All Tabs", null, true, () -> closeTabs(i -> true)));
+        m.addSeparator();
+        m.add(menuItem("Reopen Closed Tab", Keys.REOPEN_TAB, !closedTabs.isEmpty(), this::reopenClosedTab));
+        return m;
+    }
+
+    private static JMenuItem menuItem(String text, KeyStroke shortcut, boolean enabled, Runnable action) {
+        JMenuItem item = new JMenuItem(text);
+        if (shortcut != null) item.setAccelerator(shortcut);
+        item.setEnabled(enabled);
+        item.addActionListener(e -> action.run());
+        return item;
+    }
+
+    /**
+     * Closes every tab whose index matches. Unsaved changes are asked about once for all of them (Save All /
+     * Don't Save / Cancel) rather than once per tab.
+     */
+    public void closeTabs(java.util.function.IntPredicate which) {
+        List<Component> targets = new ArrayList<>();
+        List<RequestTab> dirty = new ArrayList<>();
+        for (int i = 0; i < tabs.getTabCount(); i++) {
+            if (!which.test(i)) continue;
+            Component c = tabs.getComponentAt(i);
+            targets.add(c);
+            if (c instanceof RequestTab t && t.isDirty()) dirty.add(t);
+        }
+        if (targets.isEmpty()) return;
+        if (dirty.size() == 1) {
+            RequestTab t = dirty.get(0);
+            tabs.setSelectedIndex(tabs.indexOfComponent(t));
+            Ui.SaveChoice choice = Ui.askSave(this, t.title());
+            if (choice == Ui.SaveChoice.CANCEL) return;
+            if (choice == Ui.SaveChoice.SAVE && !saveTab(t, false)) return;
+        } else if (dirty.size() > 1) {
+            StringBuilder names = new StringBuilder();
+            for (int i = 0; i < Math.min(5, dirty.size()); i++) names.append("<br>• ").append(Ui.escape(dirty.get(i).title()));
+            if (dirty.size() > 5) names.append("<br>• and ").append(dirty.size() - 5).append(" more");
+            Object[] options = {"Save All", Platform.isLinux() ? "Discard All" : "Don't Save", "Cancel"};
+            int r = Ui.option(this, "<html><b>" + dirty.size() + " tabs have unsaved changes.</b>" + names
+                    + "<br><br>Save them before closing?</html>", "Unsaved changes",
+                    javax.swing.JOptionPane.QUESTION_MESSAGE, options, options[0]);
+            if (r == 2 || r < 0) return;
+            if (r == 0) {
+                for (RequestTab t : dirty) {
+                    tabs.setSelectedIndex(tabs.indexOfComponent(t));
+                    if (!saveTab(t, false)) return; // cancelled a Save As: stop, keep the rest open
+                }
+            }
+        }
+        for (int k = targets.size() - 1; k >= 0; k--) {
+            Component c = targets.get(k);
+            int i = tabs.indexOfComponent(c);
+            if (c instanceof RequestTab t) {
+                t.cancel();
+                rememberClosed(t, i);
+            }
+            if (i >= 0) tabs.removeTabAt(i);
+        }
+        updateContentCard();
+        focusAfterClose();
+    }
+
+    private void closeCurrentTab() {
+        closeTab(tabs.getSelectedIndex());
+    }
+
+    public void duplicateTab(RequestTab t) {
+        RequestDef copy = t.draft().duplicate();
+        copy.name = t.title() + " copy";
+        addTab(copy, t.collectionId(), null, null, true);
+    }
+
+    /** Opens a saved request, or selects its tab if already open. */
+    public void openSaved(ApiCollection c, CollectionNode n, boolean newTab) {
+        if (c == null || n == null || n.request == null) return;
+        if (!newTab) {
+            for (int i = 0; i < tabs.getTabCount(); i++) {
+                if (tabs.getComponentAt(i) instanceof RequestTab t && n.id.equals(t.nodeId())) {
+                    tabs.setSelectedIndex(i);
+                    touchRecent(n.id);
+                    return;
+                }
+            }
+        }
+        RequestDef r = n.request.copy();
+        r.name = n.name;
+        addTab(r, c.id, newTab ? null : n.id, newTab ? null : r, true);
+        touchRecent(n.id);
+        sidebar.collections().select(n.id);
+    }
+
+    private void touchRecent(String nodeId) {
+        recent.remove(nodeId);
+        recent.addFirst(nodeId);
+        while (recent.size() > 8) recent.removeLast();
+    }
+
+    public void openImported(RequestDef r, boolean insecure) {
+        RequestDef copy = r.copy();
+        if (insecure) copy.insecure = Boolean.TRUE;
+        addTab(copy, currentCollectionIdForNew(), null, null, true);
+    }
+
+    public void importCurlInto(RequestTab tab, String text) {
+        try {
+            CurlParser.Result res = CurlParser.parse(text);
+            tab.applyImported(res.request(), res.insecure());
+            int skipped = res.ignored().size() + res.warnings().size();
+            status("Imported cURL command" + (skipped > 0 ? " · " + skipped + " option" + (skipped == 1 ? "" : "s") + " need attention" : ""),
+                    skipped > 0 ? "Review" : null, skipped > 0 ? () -> CurlImportDialog.open(this, ctx, tab, text) : null);
+        } catch (CurlParseException e) {
+            CurlImportDialog.open(this, ctx, tab, text);
+        }
+    }
+
+    public void showCurlImport(String text) {
+        CurlImportDialog.open(this, ctx, currentRequestTab(), text);
+    }
+
+    // ---- saving ----------------------------------------------------------------------------
+
+    /** Saves a tab; returns false if the user cancelled. */
+    /** A starting name for an untitled request: its last path segment ("orders" for /v2/orders?x=1). */
+    static String suggestName(RequestDef r) {
+        String u = r.url == null ? "" : r.url.replaceFirst("^[a-zA-Z]+://[^/]*", "").replaceFirst("[?#].*$", "");
+        String[] parts = u.split("/");
+        for (int i = parts.length - 1; i >= 0; i--) {
+            String p = parts[i].trim();
+            if (!p.isEmpty() && !p.startsWith("{{")) {
+                String name = p.replace('-', ' ').replace('_', ' ');
+                return Character.toUpperCase(name.charAt(0)) + name.substring(1);
+            }
+        }
+        return "";
+    }
+
+    public boolean saveTab(RequestTab t, boolean saveAs) {
+        RequestDef draft = t.draft();
+        CollectionNode node = t.isSaved() ? ctx.repo.node(t.collectionId(), t.nodeId()) : null;
+        if (!saveAs && node != null) {
+            ApiCollection c = ctx.repo.collection(t.collectionId());
+            String keepId = node.request == null ? draft.id : node.request.id;
+            node.request = draft.copy();
+            node.request.id = keepId;
+            node.name = draft.name;
+            ctx.repo.saveCollection(c);
+            t.markSaved(c.id, node.id);
+            status("Saved to " + c.pathTo(node.id), null, null);
+            return true;
+        }
+        if (ctx.repo.collections().isEmpty()) {
+            ApiCollection c = new ApiCollection();
+            c.name = "My Requests";
+            ctx.repo.addCollection(c);
+        }
+        SaveToDialog.Target target = SaveToDialog.open(this, ctx, draft.name.startsWith("Untitled") ? suggestName(draft) : draft.name,
+                saveAs ? "Save Request As" : "Save Request", t.collectionId());
+        if (target == null) return false;
+        RequestDef r = draft.copy();
+        r.id = UUID.randomUUID().toString();
+        r.name = target.name();
+        CollectionNode n = CollectionNode.request(r);
+        target.into().add(n);
+        ctx.repo.saveCollection(target.collection());
+        t.setRequestName(target.name());
+        t.markSaved(target.collection().id, n.id);
+        sidebar.collections().expandedIds().add(target.collection().id);
+        sidebar.collections().rebuild();
+        sidebar.collections().select(n.id);
+        status("Saved to " + target.collection().pathTo(n.id), null, null);
+        return true;
+    }
+
+    // ---- collections -----------------------------------------------------------------------
+
+    public void newCollection() {
+        String name = Ui.prompt(this, "New Collection", "Collection name", "");
+        if (name == null) return;
+        ApiCollection c = new ApiCollection();
+        c.name = name;
+        ctx.repo.addCollection(c);
+        showSidebar("collections");
+        sidebar.collections().select(c.id);
+    }
+
+    public void newRequestIn(ApiCollection c, List<CollectionNode> into) {
+        RequestDef r = new RequestDef();
+        r.name = "New Request";
+        CollectionNode n = CollectionNode.request(r);
+        into.add(n);
+        ctx.repo.saveCollection(c);
+        sidebar.collections().expandedIds().add(c.id);
+        sidebar.collections().rebuild();
+        sidebar.collections().select(n.id);
+        openSaved(c, n, false);
+        RequestTab t = currentRequestTab();
+        if (t != null) t.focusUrl();
+    }
+
+    public void renameCollection(ApiCollection c) {
+        String name = Ui.prompt(this, "Rename Collection", "Name", c.name);
+        if (name == null) return;
+        c.name = name;
+        ctx.repo.saveCollection(c);
+        updateBreadcrumb();
+    }
+
+    public void duplicateCollection(ApiCollection c) {
+        ApiCollection copy = new ApiCollection();
+        copy.name = c.name + " copy";
+        for (Variable v : c.variables) copy.variables.add(v.copy());
+        for (CollectionNode n : c.items) copy.items.add(n.duplicate());
+        ctx.repo.addCollection(copy);
+        sidebar.collections().select(copy.id);
+    }
+
+    public void deleteCollection(ApiCollection c) {
+        int[] count = {0};
+        c.forEachRequest(n -> count[0]++);
+        if (!Ui.confirm(this, "Delete Collection", "Delete “" + c.name + "”" + (count[0] > 0 ? " and its " + count[0]
+                + " request" + (count[0] == 1 ? "" : "s") : "") + "?", "Delete")) return;
+        ctx.repo.deleteCollection(c);
+        for (RequestTab t : requestTabs()) if (c.id.equals(t.collectionId())) t.detach();
+        status("Deleted “" + c.name + "”", "Undo", () -> ctx.repo.addCollection(c));
+    }
+
+    public void renameNode(ApiCollection c, CollectionNode n) {
+        String name = Ui.prompt(this, n.folder ? "Rename Folder" : "Rename Request", "Name", n.name);
+        if (name == null) return;
+        n.name = name;
+        if (n.request != null) n.request.name = name;
+        ctx.repo.saveCollection(c);
+        for (RequestTab t : requestTabs()) if (n.id.equals(t.nodeId()) && n.request != null) t.savedRequestChanged(n.request);
+        updateBreadcrumb();
+    }
+
+    public void duplicateNode(ApiCollection c, CollectionNode n) {
+        CollectionNode copy = n.duplicate();
+        copy.name = n.name + " copy";
+        if (copy.request != null) copy.request.name = copy.name;
+        List<CollectionNode> list = c.parentList(n.id);
+        if (list == null) return;
+        list.add(list.indexOf(n) + 1, copy);
+        ctx.repo.saveCollection(c);
+        sidebar.collections().select(copy.id);
+    }
+
+    public void deleteNode(ApiCollection c, CollectionNode n) {
+        if (c == null) return;
+        int[] count = {0};
+        walk(n, x -> count[0]++);
+        String what = n.folder ? "“" + n.name + "”" + (count[0] > 0 ? " and its " + count[0] + " request" + (count[0] == 1 ? "" : "s") : "")
+                : "“" + n.name + "”";
+        if (!Ui.confirm(this, n.folder ? "Delete Folder" : "Delete Request", "Delete " + what + "?", "Delete")) return;
+        List<CollectionNode> list = c.parentList(n.id);
+        if (list == null) return;
+        int index = list.indexOf(n);
+        list.remove(n);
+        ctx.repo.saveCollection(c);
+        List<String> ids = new ArrayList<>();
+        ids.add(n.id);
+        walk(n, x -> ids.add(x.id));
+        for (RequestTab t : requestTabs()) if (ids.contains(t.nodeId())) t.detach();
+        status("Deleted " + what, "Undo", () -> {
+            list.add(Math.min(index, list.size()), n);
+            ctx.repo.saveCollection(c);
+        });
+    }
+
+    private static void collectFolders(List<CollectionNode> items, List<String> out) {
+        for (CollectionNode n : items) {
+            if (n.folder) {
+                out.add(n.id);
+                collectFolders(n.children, out);
+            }
+        }
+    }
+
+    private static void walk(CollectionNode n, java.util.function.Consumer<CollectionNode> requestAction) {
+        for (CollectionNode ch : n.children) {
+            if (!ch.folder && ch.request != null) requestAction.accept(ch);
+            walk(ch, requestAction);
+        }
+    }
+
+    public void copyNodeAsCurl(ApiCollection c, CollectionNode n) {
+        if (n.request == null) return;
+        String cmd = CurlExporter.export(n.request, ctx.resolverFor(c == null ? null : c.id), ctx.effectiveInsecure(n.request));
+        Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(cmd), null);
+        status("Copied “" + n.name + "” as cURL", null, null);
+    }
+
+    public void collectionsChanged() {
+        updateBreadcrumb();
+    }
+
+    // ---- history ---------------------------------------------------------------------------
+
+    public void recordHistory(HistoryEntry e) {
+        ctx.repo.addHistory(e);
+    }
+
+    public void showHistoryEntry(HistoryEntry h) {
+        for (int i = 0; i < tabs.getTabCount(); i++) {
+            if (tabs.getComponentAt(i) instanceof HistoryTab t && t.entry() == h) {
+                tabs.setSelectedIndex(i);
+                return;
+            }
+        }
+        // Reuse a single history tab so browsing history doesn't pile up tabs.
+        for (int i = 0; i < tabs.getTabCount(); i++) {
+            if (tabs.getComponentAt(i) instanceof HistoryTab) {
+                tabs.removeTabAt(i);
+                break;
+            }
+        }
+        HistoryTab t = new HistoryTab(this, h);
+        tabs.addTab(t.title(), t);
+        int i = tabs.indexOfComponent(t);
+        TabHeader header = new TabHeader();
+        header.update(h.sentMethod, t.title(), false, true);
+        tabs.setTabComponentAt(i, header);
+        tabs.setToolTipTextAt(i, "History · " + new SimpleDateFormat("d MMM HH:mm").format(new Date(h.timestamp)));
+        tabs.setSelectedIndex(i);
+        updateContentCard();
+    }
+
+    public void openFromHistory(HistoryEntry h) {
+        RequestDef r = h.request == null ? new RequestDef() : h.request.duplicate();
+        r.name = h.sourceName != null ? h.sourceName : "Request from history";
+        addTab(r, null, null, null, true);
+    }
+
+    public void saveHistoryToCollection(HistoryEntry h) {
+        if (h.request == null) return;
+        if (ctx.repo.collections().isEmpty()) {
+            ApiCollection c = new ApiCollection();
+            c.name = "My Requests";
+            ctx.repo.addCollection(c);
+        }
+        SaveToDialog.Target target = SaveToDialog.open(this, ctx, h.sourceName != null ? h.sourceName : "", "Save to Collection", null);
+        if (target == null) return;
+        RequestDef r = h.request.duplicate();
+        r.name = target.name();
+        CollectionNode n = CollectionNode.request(r);
+        target.into().add(n);
+        ctx.repo.saveCollection(target.collection());
+        showSidebar("collections");
+        sidebar.collections().select(n.id);
+        status("Saved to " + target.collection().pathTo(n.id), null, null);
+    }
+
+    public void copyHistoryAsCurl(HistoryEntry h) {
+        if (h.request == null) return;
+        String cmd = CurlExporter.export(h.request, null, Boolean.TRUE.equals(h.request.insecure));
+        Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(cmd), null);
+        status("Copied as cURL", null, null);
+    }
+
+    public void clearHistory() {
+        int n = ctx.repo.history().size();
+        if (n == 0) return;
+        if (!Ui.confirm(this, "Clear History", "Remove all " + n + " history entries?", "Clear History")) return;
+        List<HistoryEntry> removed = ctx.repo.clearHistory();
+        status("History cleared", "Undo", () -> ctx.repo.restoreHistory(removed));
+    }
+
+    public void historyChanged() {
+        sidebar.history().rebuild();
+    }
+
+    // ---- TLS -------------------------------------------------------------------------------
+
+    public void trustCertificate(RequestTab tab, ResponseData r) {
+        java.security.cert.X509Certificate[] chain = ctx.tls.lastChain(r.host);
+        if (chain == null || chain.length == 0) {
+            Ui.error(this, "No certificate to show", "The server's certificate wasn't captured. Try sending the request again.");
+            return;
+        }
+        boolean resend = TrustCertDialog.open(this, ctx, chain, tab.title());
+        refreshStatus();
+        if (resend) tab.send();
+    }
+
+    public void refreshStatus() {
+        statusBar.refresh();
+    }
+
+    // ---- settings & theme ------------------------------------------------------------------
+
+    public void openSettings(String pane) {
+        SettingsDialog.open(this, ctx, pane);
+    }
+
+    /** Zoom in (+1), out (-1) or back to actual size (0); the level is saved with the settings. */
+    public void zoom(int direction) {
+        float z = Theme.zoomStep(direction);
+        float ratio = z / Theme.zoom();
+        Theme.setZoom(z, true);
+        if (sidebarVisible) split.setDividerLocation(Math.round(split.getDividerLocation() * ratio));
+        else sidebarWidth = Math.round(sidebarWidth * ratio);
+        ctx.settings().zoom = z;
+        ctx.repo.saveSettings();
+        updateEnvButton();
+        refreshStatus();
+        status("Zoom " + Math.round(z * 100) + "%", null, null);
+    }
+
+    /** Applies the font families in the settings to every open window. */
+    public void applyFonts() {
+        Settings st = ctx.settings();
+        Theme.setFonts(st.uiFontFamily, st.codeFontFamily, true);
+        updateEnvButton();
+        refreshStatus();
+    }
+
+    private void bindExtra(String id, KeyStroke... strokes) {
+        javax.swing.InputMap im = getRootPane().getInputMap(javax.swing.JComponent.WHEN_IN_FOCUSED_WINDOW);
+        for (KeyStroke ks : strokes) im.put(ks, "rc." + id);
+        getRootPane().getActionMap().put("rc." + id, actions.get(id));
+    }
+
+    /**
+     * Follows the OS light/dark setting while the theme is "Match System". Reading it means running a small
+     * command (registry, defaults or gsettings), so it's polled off the UI thread every few seconds.
+     */
+    private void watchSystemAppearance() {
+        java.util.concurrent.ScheduledExecutorService ex = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "appearance-watch");
+            t.setDaemon(true);
+            return t;
+        });
+        boolean[] last = {Platform.systemPrefersDark()};
+        ex.scheduleWithFixedDelay(() -> {
+            boolean now = Platform.systemPrefersDark();
+            if (now == last[0]) return;
+            last[0] = now;
+            SwingUtilities.invokeLater(() -> {
+                if (ctx.settings().theme == Settings.ThemeMode.SYSTEM) applyTheme();
+            });
+        }, 3, 3, java.util.concurrent.TimeUnit.SECONDS);
+    }
+
+    /** Flips light and dark within the current family: Light and Dark, or Solarized Sepia and Solarized Dark. */
+    public void toggleAppearance() {
+        setAppearance(toggled(Theme.palette()));
+    }
+
+    static Settings.ThemeMode toggled(Theme.Palette p) {
+        return switch (p) {
+            case LIGHT -> Settings.ThemeMode.DARK;
+            case DARK -> Settings.ThemeMode.LIGHT;
+            case SEPIA -> Settings.ThemeMode.SOLARIZED_DARK;
+            case SOLARIZED_DARK -> Settings.ThemeMode.SEPIA;
+        };
+    }
+
+    public void setAppearance(Settings.ThemeMode m) {
+        ctx.settings().theme = m;
+        ctx.repo.saveSettings();
+        applyTheme();
+    }
+
+    private void appearanceMenu(MouseEvent e) {
+        JPopupMenu menu = new JPopupMenu();
+        ButtonGroup g = new ButtonGroup();
+        for (Settings.ThemeMode m : Settings.ThemeMode.values()) {
+            if (m == Settings.ThemeMode.LIGHT || m == Settings.ThemeMode.SEPIA) menu.addSeparator();
+            JRadioButtonMenuItem i = new JRadioButtonMenuItem(m.label, ctx.settings().theme == m);
+            i.addActionListener(ev -> setAppearance(m));
+            g.add(i);
+            menu.add(i);
+        }
+        Ui.showBelow(menu, themeToggle);
+    }
+
+    private void syncAppearanceControls() {
+        boolean dark = Theme.dark();
+        themeToggle.setIcon(Icons.get(dark ? "sun" : "moon"));
+        String next = "Switch to " + toggled(Theme.palette()).label;
+        String tip = next + " (" + Keys.label(Keys.TOGGLE_APPEARANCE) + ")"
+                + (ctx.settings().theme == Settings.ThemeMode.SYSTEM ? " · now matching the system" : "")
+                + " · right-click for more";
+        themeToggle.setToolTipText(tip);
+        themeToggle.getAccessibleContext().setAccessibleName(next);
+        JRadioButtonMenuItem item = appearanceItems.get(ctx.settings().theme);
+        if (item != null) item.setSelected(true);
+    }
+
+    public void applyTheme() {
+        Motion.crossfade(this, () -> Theme.apply(ctx.settings().theme, true));
+        syncAppearanceControls();
+        updateEnvButton();
+        refreshStatus();
+    }
+
+    public void settingsChanged() {
+        for (RequestTab t : requestTabs()) t.settingsChanged();
+        refreshStatus();
+    }
+
+    public void status(String text, String actionLabel, Runnable action) {
+        statusBar.show(text, actionLabel, action);
+    }
+
+    // ---- command palette -------------------------------------------------------------------
+
+    private void openPalette() {
+        CommandPalette.open(this, this::paletteItems);
+    }
+
+    private List<CommandPalette.Item> paletteItems() {
+        List<CommandPalette.Item> out = new ArrayList<>();
+        Map<String, CommandPalette.Item> byNode = new LinkedHashMap<>();
+        for (ApiCollection c : ctx.repo.collections()) {
+            c.forEachRequest(n -> {
+                CommandPalette.Item it = new CommandPalette.Item(CommandPalette.Group.REQUESTS, n.name, c.pathTo(n.id),
+                        n.request.method, null, null, () -> openSaved(c, n, false), () -> openSaved(c, n, true));
+                out.add(it);
+                byNode.put(n.id, it);
+            });
+        }
+        for (String id : recent) {
+            CommandPalette.Item it = byNode.get(id);
+            if (it != null) {
+                out.add(new CommandPalette.Item(CommandPalette.Group.RECENT, it.label(), it.detail(), it.method(), null, null,
+                        it.run(), it.runAlt()));
+            }
+        }
+        Environment active = ctx.activeEnvironment();
+        for (Environment e : ctx.repo.environments()) {
+            if (e == active) continue;
+            out.add(new CommandPalette.Item(CommandPalette.Group.ENVIRONMENTS, "Switch to " + e.name, null, null,
+                    Ui.dot(() -> Theme.hex(e.color, Theme.accent()), 9), null, () -> switchEnvironment(e), null));
+        }
+        if (active != null) {
+            out.add(new CommandPalette.Item(CommandPalette.Group.ENVIRONMENTS, "No environment", null, null,
+                    Ui.dot(() -> null, 9), null, () -> switchEnvironment(null), null));
+        }
+        out.add(new CommandPalette.Item(CommandPalette.Group.ENVIRONMENTS, "Manage Environments…", null, null,
+                Icons.get("environment"), null, () -> showEnvironments(null, null, false), null));
+        for (Action a : actions.values()) {
+            if (Boolean.TRUE.equals(a.getValue("rc.hideInPalette"))) continue;
+            if (!a.isEnabled()) continue; // don't offer commands that can't run right now
+            out.add(new CommandPalette.Item(CommandPalette.Group.ACTIONS, (String) a.getValue(Action.NAME), null, null,
+                    Icons.get("arrow-right", 12), (KeyStroke) a.getValue(Action.ACCELERATOR_KEY),
+                    () -> a.actionPerformed(new ActionEvent(this, ActionEvent.ACTION_PERFORMED, "palette")), null));
+        }
+        SimpleDateFormat time = new SimpleDateFormat("d MMM HH:mm");
+        int n = 0;
+        for (HistoryEntry h : ctx.repo.history()) {
+            if (n++ > 50) break;
+            String path = h.sentUrl == null ? "" : h.sentUrl.replaceFirst("^[a-zA-Z]+://", "");
+            out.add(new CommandPalette.Item(CommandPalette.Group.HISTORY, path,
+                    (h.status > 0 ? String.valueOf(h.status) : "failed") + " · " + time.format(new Date(h.timestamp)),
+                    h.sentMethod, null, null, () -> showHistoryEntry(h), () -> openFromHistory(h)));
+        }
+        return out;
+    }
+
+    // ---- actions & menus -------------------------------------------------------------------
+
+    private Action action(String id, String name, KeyStroke ks, Runnable r) {
+        Action a = new AbstractAction(name) {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                r.run();
+            }
+        };
+        if (ks != null) a.putValue(Action.ACCELERATOR_KEY, ks);
+        actions.put(id, a);
+        return a;
+    }
+
+    private void withTab(java.util.function.Consumer<RequestTab> c) {
+        RequestTab t = currentRequestTab();
+        if (t != null) c.accept(t);
+    }
+
+    private void buildActions() {
+        action("new", "New Request", Keys.NEW_TAB, this::newTab);
+        action("newCollection", "New Collection…", Keys.NEW_COLLECTION, this::newCollection);
+        action("import", "Import cURL…", Keys.IMPORT_CURL, () -> showCurlImport(null));
+        action("save", "Save", Keys.SAVE, () -> withTab(t -> saveTab(t, false)));
+        action("saveAs", "Save As…", Keys.SAVE_AS, () -> withTab(t -> saveTab(t, true)));
+        action("close", "Close Tab", Keys.CLOSE_TAB, this::closeCurrentTab);
+        action("settings", Platform.isMac() ? "Settings…" : "Settings", Keys.SETTINGS, () -> openSettings(null));
+        action("send", "Send Request", Keys.SEND, () -> withTab(RequestTab::send));
+        action("copyCurl", "Copy as cURL", Keys.COPY_CURL, () -> withTab(t -> t.copyAsCurl(true)));
+        action("copyCurlVars", "Copy as cURL (keep {{variables}})", null, () -> withTab(t -> t.copyAsCurl(false)));
+        action("focusUrl", "Focus URL", Keys.FOCUS_URL, () -> withTab(RequestTab::focusUrl));
+        action("toggleTls", "Toggle TLS Verification for Request", null,
+                () -> withTab(t -> t.setInsecure(!ctx.effectiveInsecure(t.draft()))));
+        action("switchEnv", "Switch Environment…", Keys.SWITCH_ENV, this::showEnvironmentMenu);
+        action("manageEnv", "Manage Environments…", null, () -> showEnvironments(null, null, false));
+        action("find", "Find in Response", Keys.FIND, () -> withTab(RequestTab::showFind));
+        action("sidebar", "Toggle Sidebar", Keys.TOGGLE_SIDEBAR, this::toggleSidebar);
+        action("toggleAppearance", "Toggle Light/Dark", Keys.TOGGLE_APPEARANCE, this::toggleAppearance);
+        action("zoomIn", "Zoom In", Keys.ZOOM_IN, () -> zoom(1));
+        action("zoomOut", "Zoom Out", Keys.ZOOM_OUT, () -> zoom(-1));
+        action("zoomReset", "Actual Size", Keys.ZOOM_RESET, () -> zoom(0));
+        bindExtra("zoomIn", Keys.ZOOM_IN_ALT);
+        bindExtra("zoomOut", Keys.ZOOM_OUT_ALT);
+        bindExtra("zoomReset", Keys.ZOOM_RESET_ALT);
+        action("showCollections", "Show Collections", null, () -> showSidebar("collections"));
+        action("showHistory", "Show History", null, () -> showSidebar("history"));
+        action("palette", "Command Palette", Keys.PALETTE, this::openPalette).putValue("rc.hideInPalette", true);
+        action("nextTab", "Next Tab", Keys.NEXT_TAB, () -> cycleTab(1));
+        action("duplicateTab", "Duplicate Tab", null, () -> withTab(this::duplicateTab));
+        action("reopenTab", "Reopen Closed Tab", Keys.REOPEN_TAB, this::reopenClosedTab);
+        action("closeOthers", "Close Other Tabs", null, () -> {
+            int keep = tabs.getSelectedIndex();
+            closeTabs(i -> i != keep);
+        });
+        action("closeAll", "Close All Tabs", null, () -> closeTabs(i -> true));
+        action("prevTab", "Previous Tab", Keys.PREV_TAB, () -> cycleTab(-1));
+        action("dataFolder", "Open Data Folder", null, () -> SettingsDialog.reveal(ctx.repo.paths().base()));
+        action("certsFolder", "Open Certificates Folder", null, () -> SettingsDialog.reveal(ctx.tls.certsDir()));
+        action("certificates", "Certificates…", null, () -> openSettings(SettingsDialog.CERTIFICATES));
+        action("clearHistory", "Clear History…", null, this::clearHistory);
+        action("shortcuts", "Keyboard Shortcuts", null, this::showShortcuts);
+        action("quickStart", "Quick Start", null, this::showQuickStart);
+        action("undo", "Undo", Keys.UNDO, () -> VarSupport.undo(focusOwner())).putValue("rc.hideInPalette", true);
+        action("redo", "Redo", Keys.REDO, () -> VarSupport.redo(focusOwner())).putValue("rc.hideInPalette", true);
+        action("about", "About REST Client", null, this::showAbout);
+        action("quit", Platform.isMac() ? "Quit REST Client" : "Exit", null, this::quit)
+                .putValue("rc.hideInPalette", true);
+    }
+
+    private Component focusOwner() {
+        return KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
+    }
+
+    private void cycleTab(int delta) {
+        int n = tabs.getTabCount();
+        if (n == 0) return;
+        tabs.setSelectedIndex((tabs.getSelectedIndex() + delta + n) % n);
+    }
+
+    private JMenuBar buildMenuBar() {
+        JMenuBar mb = new JMenuBar();
+        JMenu file = new JMenu("File");
+        add(file, "new", "newCollection", "import", null, "save", "saveAs", null, "close");
+        if (!Platform.isMac()) add(file, null, "settings", null, "quit");
+        JMenu edit = new JMenu("Edit");
+        add(edit, "undo", "redo", null);
+        edit.add(textAction(new DefaultEditorKit.CutAction(), "Cut", Keys.mod(java.awt.event.KeyEvent.VK_X)));
+        edit.add(textAction(new DefaultEditorKit.CopyAction(), "Copy", Keys.mod(java.awt.event.KeyEvent.VK_C)));
+        edit.add(textAction(new DefaultEditorKit.PasteAction(), "Paste", Keys.mod(java.awt.event.KeyEvent.VK_V)));
+        edit.add(textAction(new javax.swing.text.TextAction("select-all") {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                javax.swing.text.JTextComponent c = getFocusedComponent();
+                if (c != null) c.selectAll();
+            }
+        }, "Select All", Keys.mod(java.awt.event.KeyEvent.VK_A)));
+        add(edit, null, "find");
+        JMenu view = new JMenu("View");
+        add(view, "sidebar", "showCollections", "showHistory", null, "zoomIn", "zoomOut", "zoomReset", null);
+        JMenu appearance = new JMenu("Appearance");
+        ButtonGroup g = new ButtonGroup();
+        for (Settings.ThemeMode m : Settings.ThemeMode.values()) {
+            if (m == Settings.ThemeMode.LIGHT || m == Settings.ThemeMode.SEPIA) appearance.addSeparator();
+            JRadioButtonMenuItem i = new JRadioButtonMenuItem(m.label, ctx.settings().theme == m);
+            i.addActionListener(e -> setAppearance(m));
+            appearanceItems.put(m, i);
+            g.add(i);
+            appearance.add(i);
+        }
+        appearance.addSeparator();
+        appearance.add(new JMenuItem(actions.get("toggleAppearance")));
+        view.add(appearance);
+        JMenu request = new JMenu("Request");
+        add(request, "send", null, "copyCurl", "copyCurlVars", null, "focusUrl", "toggleTls", null, "switchEnv", "manageEnv", null,
+                "certificates", "clearHistory");
+        JMenu window = new JMenu("Window");
+        add(window, "palette", null, "nextTab", "prevTab", null, "duplicateTab", "reopenTab", null, "closeOthers", "closeAll");
+        JMenu help = new JMenu("Help");
+        add(help, "quickStart", "shortcuts", null, "dataFolder", "certsFolder");
+        if (!Platform.isMac()) add(help, null, "about");
+        mb.add(file);
+        mb.add(edit);
+        mb.add(view);
+        mb.add(request);
+        mb.add(window);
+        mb.add(help);
+        return mb;
+    }
+
+    private void add(JMenu menu, String... ids) {
+        for (String id : ids) {
+            if (id == null) menu.addSeparator();
+            else menu.add(new JMenuItem(actions.get(id)));
+        }
+    }
+
+    private static JMenuItem textAction(Action a, String name, KeyStroke ks) {
+        JMenuItem i = new JMenuItem(a);
+        i.setText(name);
+        i.setAccelerator(ks);
+        return i;
+    }
+
+    private void installMacHandlers() {
+        if (!Desktop.isDesktopSupported()) return;
+        Desktop d = Desktop.getDesktop();
+        try {
+            if (d.isSupported(Desktop.Action.APP_ABOUT)) d.setAboutHandler(e -> showAbout());
+            if (d.isSupported(Desktop.Action.APP_PREFERENCES)) d.setPreferencesHandler(e -> openSettings(null));
+            if (d.isSupported(Desktop.Action.APP_QUIT_HANDLER)) d.setQuitHandler((e, response) -> {
+                quit();
+                response.cancelQuit();
+            });
+        } catch (UnsupportedOperationException | SecurityException ignored) {
+            // not on this platform
+        }
+    }
+
+    private void showAbout() {
+        Ui.message(this, "<html><b>REST Client</b> 1.0<br>A lightweight, standalone REST client.<br><br>"
+                        + "Data: " + Ui.escape(dev.restclient.store.AppPaths.display(ctx.repo.paths().base())) + "</html>",
+                "About REST Client", JOptionPane.PLAIN_MESSAGE, new javax.swing.ImageIcon(Theme.appIcon(64)));
+    }
+
+    /** A one-screen guide to the things people look for first (help and documentation, Nielsen #10). */
+    private void showQuickStart() {
+        String[][] tips = {
+                {"Send a request", "Type or paste a URL, pick the method, press " + Keys.label(Keys.SEND) + "."},
+                {"Paste a cURL command", "Paste it into any URL field; it's turned into a request with headers and body."},
+                {"Use variables", "Write {{name}} anywhere. Hover a variable to see its value and where it comes from; "
+                        + "define values in Environments (" + Keys.label(Keys.SWITCH_ENV) + " to switch)."},
+                {"Save and organise", Keys.label(Keys.SAVE) + " saves into a collection. Right-click collections, folders and "
+                        + "tabs for more."},
+                {"Find anything", Keys.label(Keys.PALETTE) + " searches requests, environments, history and commands."},
+                {"Certificates", "Self-signed or internal CA? Trust the certificate from the error screen, or put it in the "
+                        + "certs folder. You can also skip verification per request."},
+                {"Undo mistakes", "Deleted something? Use Undo in the status bar. Closed a tab? " + Keys.label(Keys.REOPEN_TAB)
+                        + " reopens it."},
+        };
+        StringBuilder html = new StringBuilder("<html><div style='width:" + Ui.css(440) + "px'>");
+        for (String[] t : tips) {
+            html.append("<p style='margin-bottom:" + Ui.css(8) + "px'><b>").append(Ui.escape(t[0])).append("</b><br>")
+                    .append(Ui.escape(t[1])).append("</p>");
+        }
+        html.append("</div></html>");
+        Ui.message(this, new JLabel(html.toString()), "Quick Start", JOptionPane.PLAIN_MESSAGE, null);
+    }
+
+    private void showShortcuts() {
+        List<Object[]> rows = new ArrayList<>();
+        for (Action a : actions.values()) {
+            KeyStroke ks = (KeyStroke) a.getValue(Action.ACCELERATOR_KEY);
+            if (ks != null) rows.add(new Object[]{a.getValue(Action.NAME), Keys.label(ks)});
+        }
+        rows.add(new Object[]{"Jump to a variable's definition", Platform.isMac() ? "⌘-click" : "Ctrl+click"});
+        rows.add(new Object[]{"Cancel request / close dialog", Platform.isMac() ? "esc" : "Esc"});
+        JTable t = new JTable(rows.toArray(new Object[0][]), new Object[]{"Action", "Shortcut"});
+        t.setEnabled(false);
+        t.setRowHeight(Theme.scaled(28));
+        t.setShowVerticalLines(false);
+        t.setIntercellSpacing(new Dimension(0, 1));
+        Theme.bg(t, Theme::panelBg);
+        Theme.bg(t.getTableHeader(), Theme::panelBg);
+        t.getColumnModel().getColumn(1).setMaxWidth(Theme.scaled(150));
+        t.getColumnModel().getColumn(1).setPreferredWidth(Theme.scaled(140));
+        JScrollPane sp = new JScrollPane(t);
+        sp.setBorder(javax.swing.BorderFactory.createEmptyBorder());
+        Theme.bg(sp.getViewport(), Theme::panelBg);
+        sp.setPreferredSize(new Dimension(Theme.scaled(460), Theme.scaled(420)));
+        Ui.message(this, sp, "Keyboard Shortcuts", JOptionPane.PLAIN_MESSAGE, null);
+    }
+
+    // ---- session ---------------------------------------------------------------------------
+
+    private void restoreSession() {
+        Session s = ctx.repo.loadSession();
+        Rectangle screen = getGraphicsConfiguration().getBounds();
+        int w = Math.min(Math.max(900, s.width), screen.width);
+        int h = Math.min(Math.max(600, s.height), screen.height);
+        setSize(w, h);
+        if (s.x >= 0 && s.y >= 0 && s.x < screen.x + screen.width - 100 && s.y < screen.y + screen.height - 100) {
+            setLocation(s.x, s.y);
+        } else {
+            setLocationRelativeTo(null);
+        }
+        if (s.maximized) setExtendedState(MAXIMIZED_BOTH);
+        sidebarWidth = Math.max(200, Math.min(480, s.sidebarWidth));
+        split.setDividerLocation(sidebarWidth);
+        if (!s.sidebarVisible) toggleSidebar();
+        sidebar.showTab(s.sidebarTab);
+        List<String> expanded = new ArrayList<>(s.expandedNodes);
+        if (expanded.isEmpty() && !java.nio.file.Files.exists(ctx.repo.paths().session())) {
+            // First launch: show everything.
+            for (ApiCollection c : ctx.repo.collections()) {
+                expanded.add(c.id);
+                collectFolders(c.items, expanded);
+            }
+        }
+        sidebar.collections().setExpandedIds(expanded);
+
+        if (ctx.settings().restoreTabs) {
+            for (Session.Tab t : s.tabs) {
+                if (t.draft == null) continue;
+                CollectionNode node = ctx.repo.node(t.collectionId, t.nodeId);
+                RequestDef saved = null;
+                String nodeId = null;
+                if (node != null && node.request != null) {
+                    saved = node.request.copy();
+                    saved.name = node.name;
+                    nodeId = node.id;
+                }
+                String colId = ctx.repo.collection(t.collectionId) != null ? t.collectionId : null;
+                RequestTab tab = addTab(t.draft, colId, nodeId, saved, false);
+                tab.setDividerRatio(s.responseDivider);
+            }
+            if (s.selectedTab >= 0 && s.selectedTab < tabs.getTabCount()) tabs.setSelectedIndex(s.selectedTab);
+        }
+    }
+
+    private void saveSession() {
+        Session s = new Session();
+        boolean max = (getExtendedState() & MAXIMIZED_BOTH) != 0;
+        s.maximized = max;
+        if (!max) {
+            s.x = getX();
+            s.y = getY();
+            s.width = getWidth();
+            s.height = getHeight();
+        }
+        s.sidebarVisible = sidebarVisible;
+        s.sidebarWidth = sidebarVisible ? split.getDividerLocation() : sidebarWidth;
+        s.sidebarTab = sidebar.currentTab();
+        s.expandedNodes = new ArrayList<>(sidebar.collections().expandedIds());
+        int selected = -1;
+        for (int i = 0; i < tabs.getTabCount(); i++) {
+            if (tabs.getComponentAt(i) instanceof RequestTab t) {
+                Session.Tab st = new Session.Tab();
+                st.draft = t.draft().copy();
+                st.collectionId = t.collectionId();
+                st.nodeId = t.nodeId();
+                if (i == tabs.getSelectedIndex()) {
+                    selected = s.tabs.size();
+                    s.responseDivider = t.dividerRatio();
+                }
+                s.tabs.add(st);
+            }
+        }
+        s.selectedTab = selected;
+        ctx.repo.saveSession(s);
+    }
+
+    private void quit() {
+        if (!ctx.settings().restoreTabs) {
+            long dirty = requestTabs().stream().filter(RequestTab::isDirty).count();
+            if (dirty > 0 && !Ui.confirm(this, "Quit REST Client",
+                    dirty + " tab" + (dirty == 1 ? " has" : "s have") + " unsaved changes that will be lost.", "Quit Anyway")) {
+                return;
+            }
+        }
+        for (RequestTab t : requestTabs()) t.cancel();
+        saveSession();
+        ctx.repo.flush();
+        dispose();
+        System.exit(0);
+    }
+}

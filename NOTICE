@@ -1,0 +1,10 @@
+REST Client
+Copyright 2026 the REST Client authors
+
+This product contains no third-party code.
+
+The visual design of the look and feel in src/main/java/dev/restclient/ui/laf/
+(flat controls, rounded fields and buttons, slim scroll bars, light and dark palettes)
+was inspired by FlatLaf (https://www.formdev.com/flatlaf/, Apache License 2.0) and by
+Apple's Human Interface Guidelines. No source code from FlatLaf was copied; the
+implementation was written independently on top of Swing's Basic look and feel.
