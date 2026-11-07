@@ -9,6 +9,9 @@ no cloud — everything is stored as plain JSON in `~/.restclient`.
 > dependency-free Swing app can look like. That said, **it works**: it sends real requests, keeps your
 > collections and environments, and has unit tests and an automated UI check behind it. Use it, poke at
 > it, and keep a backup of anything you care about in `~/.restclient`.
+>
+> **Not taking requests.** Issues, feature requests and pull requests aren't being accepted. You're
+> free to **fork it** and make it your own under the [MIT License](LICENSE).
 
 **Zero third-party dependencies.** Everything — the look and feel, icons, code editor, JSON library and
 test kit — is in this repository, and the build needs nothing but a JDK. See [Dependencies](#dependencies).
@@ -340,3 +343,6 @@ the app: [Atkinson Hyperlegible](https://www.brailleinstitute.org/freefont/) (Br
 **Platform.** Built entirely on the JDK (Swing, Java2D, `java.net.http`). Thanks to the OpenJDK
 project for a standard library big enough to make zero dependencies possible.
 
+## License
+
+[MIT](LICENSE). Fork it, change it, ship it; no support or warranty is offered.
