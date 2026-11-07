@@ -1,7 +1,20 @@
+<div align="center">
+
 # REST Client
 
-A lightweight, standalone desktop REST client written in Java. One executable JAR, no accounts,
-no cloud — everything is stored as plain JSON in `~/.restclient`.
+**A lightweight desktop REST client in pure Java. One JAR, zero dependencies, no accounts, no cloud.**
+
+![Java 17+](https://img.shields.io/badge/Java-17%2B-4059D6?style=flat-square&logo=openjdk&logoColor=white)
+![Dependencies: none](https://img.shields.io/badge/dependencies-none-16722F?style=flat-square)
+![Platforms](https://img.shields.io/badge/platforms-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-5A5E73?style=flat-square)
+![License: MIT](https://img.shields.io/badge/license-MIT-1F6FA8?style=flat-square)
+![Built with Claude](https://img.shields.io/badge/built%20with-Claude-D97757?style=flat-square)
+
+<img src="docs/screenshots/hero.png" alt="REST Client in light and dark themes, with the command palette open" width="100%">
+
+</div>
+
+Everything is stored as plain JSON in `~/.restclient`.
 
 > **A hobby project, built with Claude.** This app was designed and written in conversation with
 > [Claude](https://claude.ai) (Anthropic's AI assistant): wireframes, code, tests and this README.
@@ -26,6 +39,37 @@ test kit — is in this repository, and the build needs nothing but a JDK. See [
 - TLS: extra trusted certificates and client certificates from `~/.restclient/certs`,
   a "Trust this certificate" flow, and per-request or default "skip verification" (certificate **and** hostname)
 - Command palette (⌘K / Ctrl+K), Light, Dark, Solarized Sepia and Solarized Dark themes (or follow the OS), choosable interface and code fonts, tabs and drafts restored on relaunch
+
+## Screenshots
+
+<div align="center">
+
+<img src="docs/screenshots/themes.png" alt="The four themes: Light, Dark, Solarized Sepia and Solarized Dark" width="100%">
+
+<sub>Four themes (Light, Dark, Solarized Sepia, Solarized Dark) or follow the OS, all checked for WCAG AA contrast.</sub>
+
+</div>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/command-palette.png" alt="Command palette"><br>
+      <b>Command palette</b><br><sub>⌘K / Ctrl+K to jump to any request, environment or action.</sub></td>
+    <td width="50%"><img src="docs/screenshots/environments.png" alt="Environments dialog"><br>
+      <b>Environments and variables</b><br><sub>Secrets, usage counts and a clear lookup order.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/autocomplete.png" alt="Variable autocomplete"><br>
+      <b>Variable autocomplete</b><br><sub>Type <code>{{</code> anywhere for a list of defined variables.</sub></td>
+    <td><img src="docs/screenshots/curl-import.png" alt="cURL import"><br>
+      <b>cURL import</b><br><sub>Paste a command and see it parsed as you type.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/settings-fonts.png" alt="Settings with theme and font pickers"><br>
+      <b>Themes and fonts</b><br><sub>Pick interface and code fonts; readable fonts listed first.</sub></td>
+    <td><img src="docs/screenshots/tab-menu.png" alt="Tab context menu"><br>
+      <b>Tabs that behave</b><br><sub>Duplicate, close others / left / right, reopen closed tabs.</sub></td>
+  </tr>
+</table>
 
 ## Build and run
 
