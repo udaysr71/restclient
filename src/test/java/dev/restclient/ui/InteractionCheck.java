@@ -618,6 +618,25 @@ public final class InteractionCheck {
         edt(() -> frame.setAppearance(Settings.ThemeMode.LIGHT));
         check("Back to Light", () -> Theme.palette() == Theme.Palette.LIGHT);
 
+        // ---- hovering a background tab shows its close button without resizing anything
+        if (call(() -> tabStrip().getTabCount()) >= 3) {
+            edt(() -> tabStrip().setSelectedIndex(0));
+            List<java.awt.Rectangle> tabsBefore = call(TabStripProbe::headBounds);
+            java.awt.Rectangle target = tabsBefore.get(1);
+            java.awt.Point onScreen = call(() -> {
+                java.awt.Point p = new java.awt.Point(target.x + target.width / 3, target.y + target.height / 2);
+                SwingUtilities.convertPointToScreen(p, TabStripProbe.row());
+                return p;
+            });
+            robot.mouseMove(onScreen.x, onScreen.y);
+            robot.delay(250);
+            robot.waitForIdle();
+            check("Hovering a tab shows its close button", () -> TabStripProbe.closeVisible(1));
+            check("...without changing any tab's width or position", () -> TabStripProbe.headBounds().equals(tabsBefore));
+            robot.mouseMove(onScreen.x, onScreen.y + 200);
+            robot.delay(150);
+        }
+
         // ---- theme files: live reload, problems, removal
         edt(() -> frame.setAppearance(Themes.choiceFor("ocean")));
         check("Theme file applies from the menu choice", () -> Theme.palette().id.equals("ocean") && Theme.dark());
@@ -982,5 +1001,25 @@ public final class InteractionCheck {
     }
 
     private InteractionCheck() {
+    }
+
+    /** Reads TabStrip internals (tab head bounds, close button visibility) for the hover check. */
+    static final class TabStripProbe {
+        static java.awt.Container row() {
+            return field(tabStrip(), "row");
+        }
+
+        static List<java.awt.Rectangle> headBounds() {
+            List<java.awt.Rectangle> out = new ArrayList<>();
+            List<?> tabs = field(tabStrip(), "tabs");
+            for (Object t : tabs) out.add(((Component) field(t, "head")).getBounds());
+            return out;
+        }
+
+        static boolean closeVisible(int index) {
+            List<?> tabs = field(tabStrip(), "tabs");
+            Object head = field(tabs.get(index), "head");
+            return ((Component) field(head, "close")).isVisible();
+        }
     }
 }

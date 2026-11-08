@@ -86,8 +86,7 @@ final class MenuPainter {
     static void paint(Graphics g, JMenuItem item, Font accFont, Icon checkIcon, Icon arrowIcon) {
         Graphics2D g2 = (Graphics2D) g.create();
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        Object aa = javax.swing.UIManager.get(RenderingHints.KEY_TEXT_ANTIALIASING);
-        g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, aa != null ? aa : RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        Paint.text(g2);
         ButtonModel m = item.getModel();
         boolean enabled = item.isEnabled();
         int w = item.getWidth();

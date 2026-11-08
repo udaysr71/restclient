@@ -265,7 +265,20 @@ public class TabStrip extends JPanel {
                 setBorder(Ui.pad(0, 12, 0, 4));
                 close.setPreferredSize(new Dimension(Theme.scaled(20), Theme.scaled(20)));
                 close.setMargin(new java.awt.Insets(0, 0, 0, 0));
-                JPanel cw = Ui.transparent(new java.awt.GridBagLayout());
+                // The close button's slot is always reserved, even while the button is hidden, so showing it on
+                // hover never changes the tab's width (and never shoves the tabs to its right along).
+                JPanel cw = new JPanel(new java.awt.GridBagLayout()) {
+                    @Override
+                    public Dimension getPreferredSize() {
+                        return close.getPreferredSize();
+                    }
+
+                    @Override
+                    public Dimension getMinimumSize() {
+                        return getPreferredSize();
+                    }
+                };
+                cw.setOpaque(false);
                 cw.add(close);
                 add(cw, BorderLayout.EAST);
                 MouseAdapter m = new MouseAdapter() {

@@ -34,6 +34,18 @@ public class RcTreeUI extends BasicTreeUI {
         super.paint(g, c);
     }
 
+    /**
+     * Space before every row's content, so the disclosure chevron sits inside the rounded highlight (which starts
+     * 4 px in) with breathing room, instead of on its edge. BasicTreeUI uses getRowX for painting, hit-testing the
+     * chevron and the drop line, so all of them move together.
+     */
+    static final int ROW_LEAD = 8;
+
+    @Override
+    protected int getRowX(int row, int depth) {
+        return super.getRowX(row, depth) + Theme.scaled(ROW_LEAD);
+    }
+
     /** Repaints the selection (it's dimmer without focus). Removed again on uninstall, e.g. a theme switch. */
     private final java.awt.event.FocusListener focusRepaint = new java.awt.event.FocusAdapter() {
         @Override

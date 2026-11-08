@@ -391,6 +391,12 @@ edit. A theme only needs the colours it changes:
   - **Files:** only regular files are read, never symlinks. Each is limited to 64 KB, 400 declarations and
     16 levels of `var()`.
 
+**Text smoothing** follows the OS. On Windows, text uses ClearType's sub-pixel rendering when ClearType is
+on (Settings › Personalization › Fonts, or "Adjust ClearType text"), at the contrast you tuned it to. On macOS
+and Linux it uses greyscale smoothing. Java falls back to greyscale in two places, regardless of setting: inside
+see-through windows (only used for a popup too big to fit inside the app window), and for the moment a theme
+switch fades. To force a mode, start the app with `-Dawt.useSystemAAFontSettings=lcd` (or `gasp`, `on`, `off`).
+
 **Fonts.** Settings › General has *Interface font* and *Code font* pickers, each listing your installed
 fonts previewed in themselves; the code list only offers fonts whose letters are all the same width, and
 symbol fonts are left out. Fonts made to be easier to read (Atkinson Hyperlegible, Lexend, OpenDyslexic,

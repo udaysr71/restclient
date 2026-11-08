@@ -261,7 +261,7 @@ public class CodeArea extends JTextArea {
             g.setColor(Theme.editorBg());
             g.fillRect(clip.x, clip.y, clip.width, clip.height);
             Graphics2D g2 = (Graphics2D) g.create();
-            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            dev.restclient.ui.laf.Paint.text(g2); // the OS setting (ClearType on Windows), like Swing's own text
             g2.setFont(area.getFont().deriveFont(area.getFont().getSize2D() - 1f));
             g2.setColor(Theme.disabledText());
             FontMetrics fm = g2.getFontMetrics();

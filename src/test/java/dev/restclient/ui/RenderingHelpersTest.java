@@ -61,4 +61,24 @@ class RenderingHelpersTest {
         for (Lexer.Token t : tokens) if (offset >= t.start() && offset < t.end()) return t.type();
         return null;
     }
+
+    /** Custom-drawn text follows the OS smoothing setting (ClearType's LCD mode on Windows), never a fixed one. */
+    @dev.restclient.testkit.Test
+    void customTextUsesTheDesktopSmoothing() {
+        Object saved = javax.swing.UIManager.get(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING);
+        Object savedContrast = javax.swing.UIManager.get(java.awt.RenderingHints.KEY_TEXT_LCD_CONTRAST);
+        try {
+            javax.swing.UIManager.put(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_LCD_HRGB);
+            javax.swing.UIManager.put(java.awt.RenderingHints.KEY_TEXT_LCD_CONTRAST, 120);
+            java.awt.Graphics2D g = new java.awt.image.BufferedImage(4, 4, java.awt.image.BufferedImage.TYPE_INT_RGB).createGraphics();
+            dev.restclient.ui.laf.Paint.text(g);
+            dev.restclient.testkit.Assertions.assertEquals(java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_LCD_HRGB,
+                    g.getRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING));
+            dev.restclient.testkit.Assertions.assertEquals(120, g.getRenderingHint(java.awt.RenderingHints.KEY_TEXT_LCD_CONTRAST));
+            g.dispose();
+        } finally {
+            javax.swing.UIManager.put(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, saved);
+            javax.swing.UIManager.put(java.awt.RenderingHints.KEY_TEXT_LCD_CONTRAST, savedContrast);
+        }
+    }
 }

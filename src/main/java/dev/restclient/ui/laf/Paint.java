@@ -19,6 +19,19 @@ public final class Paint {
         return g2;
     }
 
+    /**
+     * Text smoothing as the OS does it, for text we draw ourselves: ClearType (sub-pixel, LCD) on Windows when
+     * it's on, greyscale elsewhere. RcLookAndFeel reads the desktop's setting into UIManager; Swing's own
+     * components use it automatically, and this applies the same to a custom-painted Graphics.
+     */
+    public static Graphics2D text(Graphics2D g) {
+        Object aa = javax.swing.UIManager.get(RenderingHints.KEY_TEXT_ANTIALIASING);
+        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, aa != null ? aa : RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        Object contrast = javax.swing.UIManager.get(RenderingHints.KEY_TEXT_LCD_CONTRAST);
+        if (contrast != null) g.setRenderingHint(RenderingHints.KEY_TEXT_LCD_CONTRAST, contrast);
+        return g;
+    }
+
     public static void fill(Graphics2D g, float x, float y, float w, float h, float arc, Color c) {
         if (c == null || w <= 0 || h <= 0) return;
         g.setColor(c);
