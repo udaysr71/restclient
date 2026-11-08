@@ -35,6 +35,9 @@ test kit — is in this repository, and the build needs nothing but a JDK. See [
   - undefined variables are underlined in red, with a one-click "Define…"
   - autocomplete after typing `{{`
 - Recent history, grouped by day, with read-only snapshots (secrets masked)
+- Responses: Pretty, Raw and Headers views, find, copy and save. In Headers, ⌘C / Ctrl+C copies the selected
+  rows as `Name: Value` lines, right-click offers Copy Value / Name / Row / All Headers, and the Copy button
+  copies them all. Drag the column divider to resize; double-click it to fit the names.
 - cURL import (paste into any URL field, or the import dialog) and export
 - TLS: extra trusted certificates and client certificates from `~/.restclient/certs`,
   a "Trust this certificate" flow, and per-request or default "skip verification" (certificate **and** hostname)
@@ -247,7 +250,7 @@ java Build.java featurecheck   # just the end-to-end feature check
 - **Interaction check** (98 checks): editing in fields and tables, `{{` autocomplete, the method combo, the
   palette with arrow keys, tab menus and drag-to-reorder, keyboard reachability, Save state rules, empty-URL
   handling, delete with Undo, zoom, themes and theme files, fonts, and an accessible-name audit.
-- **Feature check** (204 checks). It runs against a local HTTP and HTTPS server (self-signed certificate made
+- **Feature check** (213 checks). It runs against a local HTTP and HTTPS server (self-signed certificate made
   with `keytool`) that records every request, so it checks what the server actually received and what was
   saved to disk:
   - every method and body type, and headers and Basic/Bearer auth

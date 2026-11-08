@@ -598,11 +598,64 @@ public final class FeatureCheck {
         segment(views, 1);
         check("Raw shows the body exactly as received", () -> bodyText(t).startsWith("{\"method\":\"GET\""));
         segment(views, 2);
+        HeadersView hv = field(response(t), "headersView");
+        JTable ht = hv.table();
         check("Headers view lists the response headers", () -> {
-            javax.swing.table.TableModel m = field(response(t), "headersModel");
-            for (int i = 0; i < m.getRowCount(); i++) if ("x-server".equalsIgnoreCase(String.valueOf(m.getValueAt(i, 0)))) return true;
+            for (int i = 0; i < ht.getRowCount(); i++) if ("x-server".equalsIgnoreCase(String.valueOf(ht.getValueAt(i, 0)))) return true;
             return false;
         });
+        check("...with the same row height and inset as the request tables", () -> ht.getRowHeight() == Theme.scaled(30)
+                && hv.getInsets().left == 14 && ht.isShowing());
+        // resize the columns by dragging the divider in the header
+        int before = call(() -> ht.getColumnModel().getColumn(0).getWidth());
+        java.awt.Point divider = call(() -> {
+            javax.swing.table.JTableHeader h = ht.getTableHeader();
+            java.awt.Point p = new java.awt.Point(ht.getColumnModel().getColumn(0).getWidth() - 1, h.getHeight() / 2);
+            javax.swing.SwingUtilities.convertPointToScreen(p, h);
+            return p;
+        });
+        robot.mouseMove(divider.x, divider.y);
+        robot.delay(150);
+        robot.mousePress(java.awt.event.InputEvent.BUTTON1_DOWN_MASK);
+        for (int i = 1; i <= 10; i++) {
+            robot.mouseMove(divider.x + i * 12, divider.y);
+            robot.delay(30);
+        }
+        robot.mouseRelease(java.awt.event.InputEvent.BUTTON1_DOWN_MASK);
+        robot.waitForIdle();
+        check("Dragging the header divider resizes the columns", () -> ht.getColumnModel().getColumn(0).getWidth() >= before + 80);
+        robot.mouseMove(divider.x + 120, divider.y);
+        doubleClickAt(new java.awt.Point(divider.x + 119, divider.y));
+        check("Double-clicking the divider fits the names again", () -> Math.abs(ht.getColumnModel().getColumn(0).getWidth() - before) <= 4);
+        javax.swing.JButton copyBtn = field(response(t), "copyButton");
+        check("The Copy button says it copies headers in this view", () -> "Copy all headers".equals(copyBtn.getToolTipText()));
+        edt(copyBtn::doClick);
+        check("...and copies every header as Name: Value lines", () -> {
+            String c = clipboard();
+            return c.lines().count() == ht.getRowCount() && c.lines().anyMatch(l -> l.equalsIgnoreCase("x-server: feature-check"));
+        });
+        int serverRow = call(() -> {
+            for (int i = 0; i < ht.getRowCount(); i++) if ("x-server".equalsIgnoreCase(String.valueOf(ht.getValueAt(i, 0)))) return i;
+            return 0;
+        });
+        clickCell(ht, serverRow, 1);
+        key(MOD, KeyEvent.VK_C);
+        check("Ctrl/Cmd+C copies the selected row", () -> clipboard().equalsIgnoreCase("x-server: feature-check"));
+        edt(() -> ht.setRowSelectionInterval(0, 1));
+        edt(() -> ht.requestFocusInWindow());
+        key(MOD, KeyEvent.VK_C);
+        check("...or all the selected rows", () -> clipboard().lines().count() == 2);
+        java.awt.Point cell = call(() -> {
+            java.awt.Rectangle r = ht.getCellRect(serverRow, 1, true);
+            java.awt.Point p = new java.awt.Point(r.x + 30, r.y + r.height / 2);
+            javax.swing.SwingUtilities.convertPointToScreen(p, ht);
+            return p;
+        });
+        clickAt(cell, java.awt.event.InputEvent.BUTTON3_DOWN_MASK, 1);
+        check("Right-click offers Copy Value, Copy Name, Copy Row and Copy All Headers", () -> visibleButton("Copy Value") != null
+                && visibleButton("Copy Name") != null && visibleButton("Copy Row") != null && visibleButton("Copy All Headers") != null);
+        press("Copy Value");
+        check("Copy Value copies just the value", () -> clipboard().equals("feature-check"));
         segment(views, 0);
         check("Status, time and size are shown", () -> responseSays(t, "200") && responseSays(t, " B"));
 

@@ -79,12 +79,8 @@ public class ResponsePanel extends JPanel {
     private final JPanel tools = Ui.transparent(new FlowLayout(FlowLayout.RIGHT, 4, 0));
     private final Ui.Segmented views = new Ui.Segmented("Pretty", "Raw", "Headers");
     private final CodeArea body = new CodeArea();
-    private final DefaultTableModel headersModel = new DefaultTableModel(new Object[]{"Name", "Value"}, 0) {
-        @Override
-        public boolean isCellEditable(int r, int c) {
-            return false;
-        }
-    };
+    private final HeadersView headersView = new HeadersView();
+    private javax.swing.JButton copyButton;
     private final JPanel warnings = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 6, 0));
     private final JPanel findBar = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 6, 0));
     private final JTextField findField = Ui.searchField(new JTextField(22));
@@ -125,7 +121,8 @@ public class ResponsePanel extends JPanel {
         });
         tools.add(views);
         tools.add(Ui.toolbarButton(Icons.get("search"), "Find in response (" + Keys.label(Keys.FIND) + ")", e -> showFind()));
-        tools.add(Ui.toolbarButton(Icons.get("copy"), "Copy response body", e -> copyBody()));
+        copyButton = Ui.toolbarButton(Icons.get("copy"), "Copy response body", e -> copyShown());
+        tools.add(copyButton);
         tools.add(Ui.toolbarButton(Icons.get("download"), "Save response to file…", e -> saveBody()));
         header.add(tools, BorderLayout.EAST);
         views.onChange(i -> showView());
@@ -171,12 +168,6 @@ public class ResponsePanel extends JPanel {
         javax.swing.JScrollPane bodyScroll = CodeArea.scroll(body, true);
         bodyScroll.setBorder(BorderFactory.createEmptyBorder());
 
-        JTable headersTable = new JTable(headersModel);
-        headersTable.setFont(Theme.mono(12.5f));
-        headersTable.getColumnModel().getColumn(0).setPreferredWidth(220);
-        headersTable.getColumnModel().getColumn(1).setPreferredWidth(520);
-        JScrollPane headersScroll = new JScrollPane(headersTable);
-        headersScroll.setBorder(BorderFactory.createEmptyBorder());
 
         // empty
         JPanel empty = new JPanel(new GridBagLayout());
@@ -215,7 +206,7 @@ public class ResponsePanel extends JPanel {
         center.add(empty, "empty");
         center.add(loading, "loading");
         center.add(bodyScroll, "body");
-        center.add(headersScroll, "headers");
+        center.add(headersView, "headers");
         center.add(binary, "binary");
         center.add(errorHolder, "error");
         add(center, BorderLayout.CENTER);
@@ -279,8 +270,7 @@ public class ResponsePanel extends JPanel {
         views.button(2).setText("Headers " + r.headers.size());
         setNotes(notes);
 
-        headersModel.setRowCount(0);
-        for (KeyValue kv : r.headers) headersModel.addRow(new Object[]{kv.key, kv.value});
+        headersView.setHeaders(r.headers);
 
         if (r.isBinary()) {
             String ct = r.contentType();
@@ -579,7 +569,13 @@ public class ResponsePanel extends JPanel {
 
     private void showView() {
         int i = views.selectedIndex();
-        if (i == 2) {
+        boolean headers = i == 2;
+        if (copyButton != null) {
+            String tip = headers ? "Copy all headers" : "Copy response body";
+            copyButton.setToolTipText(tip);
+            copyButton.getAccessibleContext().setAccessibleName(tip);
+        }
+        if (headers) {
             cards.show(center, "headers");
             return;
         }
@@ -630,6 +626,13 @@ public class ResponsePanel extends JPanel {
         int count = body.markAll(q, matchCase.isSelected());
         boolean found = body.find(q, matchCase.isSelected(), forward);
         findStatus.setText(found ? count + (count == 1 ? " match" : " matches") : "Not found");
+    }
+
+    /** The toolbar's Copy: the headers while the Headers view is showing, otherwise the body. */
+    private void copyShown() {
+        if (current == null) return;
+        if (views.selectedIndex() == 2) headersView.copyAll();
+        else copyBody();
     }
 
     private void copyBody() {
