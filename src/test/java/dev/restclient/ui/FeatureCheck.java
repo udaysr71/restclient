@@ -1032,6 +1032,23 @@ public final class FeatureCheck {
         press("Undo");
         check("Undo restores the collection", () -> collection("Feature API v2 copy") != null);
 
+        // drag and drop in the tree with the mouse: move the copy out of the folder onto the collection
+        dragInTree(panel, copy.name, c.name);
+        check("Dragging a request onto its collection moves it there", () -> c.items.stream().anyMatch(n -> n == copy)
+                && folder.children.stream().noneMatch(n -> n == copy), 4000);
+        check("...saved to disk", () -> Files.list(ctx().repo.paths().collections())
+                .anyMatch(p -> readFile(p).contains("List orders copy")));
+        dragInTree(panel, copy.name, "Orders");
+        check("...and dragging it onto a folder moves it back in", () -> folder.children.stream().anyMatch(n -> n == copy)
+                && c.items.stream().noneMatch(n -> n == copy), 4000);
+        // reorder: drop between rows (a drop line), the case that used to throw a NullPointerException
+        dragInTree(panel, "List orders copy", "List orders", true);
+        check("Dropping between rows reorders: the copy is now first in the folder", () -> !folder.children.isEmpty()
+                && folder.children.get(0) == copy, 4000);
+        dragInTree(panel, "List orders", "List orders copy", true);
+        check("...and back", () -> folder.children.get(0).name.equals("List orders"), 4000);
+        check("Dragging and dropping in the tree throws nothing", () -> failures.stream().noneMatch(f -> f.startsWith("uncaught")));
+
         // filter
         JTextField filter = field(panel, "filter");
         JTree tree = field(panel, "tree");
@@ -1070,6 +1087,50 @@ public final class FeatureCheck {
                 return;
             }
         }
+    }
+
+    /** Drags the row named {@code from} onto the row named {@code to} with the mouse, as a user would. */
+    private static void dragInTree(CollectionsPanel panel, String from, String to) {
+        dragInTree(panel, from, to, false);
+    }
+
+    /** With {@code between}, aims just above the target row, so it's an insert (a drop line), not "into". */
+    private static void dragInTree(CollectionsPanel panel, String from, String to, boolean between) {
+        JTree tree = field(panel, "tree");
+        edt(() -> {
+            for (int i = 0; i < tree.getRowCount(); i++) tree.expandRow(i);
+        });
+        java.awt.Point[] pts = call(() -> {
+            java.awt.Point a = null;
+            java.awt.Point b = null;
+            for (int i = 0; i < tree.getRowCount(); i++) {
+                Object o = ((javax.swing.tree.DefaultMutableTreeNode) tree.getPathForRow(i).getLastPathComponent()).getUserObject();
+                String name = o instanceof CollectionNode n ? n.name : o instanceof ApiCollection ac ? ac.name : "";
+                java.awt.Rectangle r = tree.getRowBounds(i);
+                java.awt.Point p = new java.awt.Point(r.x + Math.min(60, r.width / 2), r.y + r.height / 2);
+                java.awt.Point edge = new java.awt.Point(p.x, r.y + 2);
+                javax.swing.SwingUtilities.convertPointToScreen(p, tree);
+                javax.swing.SwingUtilities.convertPointToScreen(edge, tree);
+                if (name.equals(from) && a == null) a = p;
+                if (name.equals(to) && b == null) b = between ? edge : p;
+            }
+            return new java.awt.Point[]{a, b};
+        });
+        if (pts[0] == null || pts[1] == null) {
+            System.out.println("       (rows not found: " + from + " → " + to + ")");
+            return;
+        }
+        robot.mouseMove(pts[0].x, pts[0].y);
+        robot.mousePress(java.awt.event.InputEvent.BUTTON1_DOWN_MASK);
+        robot.delay(120);
+        for (int i = 1; i <= 20; i++) {
+            robot.mouseMove(pts[0].x + (i % 2), pts[0].y + (pts[1].y - pts[0].y) * i / 20);
+            robot.delay(30);
+        }
+        robot.delay(200);
+        robot.mouseRelease(java.awt.event.InputEvent.BUTTON1_DOWN_MASK);
+        robot.waitForIdle();
+        robot.delay(400);
     }
 
     private static List<String> visibleRequests(JTree tree) {

@@ -588,14 +588,23 @@ public class CollectionsPanel extends JPanel {
             }
             ApiCollection src = ctx.repo.collectionOf(id);
             if (src == null) return false;
-            CollectionNode node = src.find(id);
-            List<CollectionNode> srcList = src.parentList(id);
             JTree.DropLocation dl = (JTree.DropLocation) s.getDropLocation();
             TreePath p = dl.getPath();
             Object target = ((DefaultMutableTreeNode) p.getLastPathComponent()).getUserObject();
             ApiCollection dest = collectionFor(p);
-            List<CollectionNode> destList = target instanceof ApiCollection c ? c.items : ((CollectionNode) target).children;
             int index = dl.getChildIndex();
+            // Move once the drop has finished. Saving rebuilds the tree, and Swing still clears the drop line
+            // afterwards using the old tree's rows; rebuilding first left it with a row that no longer existed.
+            javax.swing.SwingUtilities.invokeLater(() -> move(src, id, target, dest, index, p));
+            return true;
+        }
+
+        private void move(ApiCollection src, String id, Object target, ApiCollection dest, int dropIndex, TreePath p) {
+            CollectionNode node = src.find(id);
+            List<CollectionNode> srcList = src.parentList(id);
+            if (node == null || srcList == null) return;
+            List<CollectionNode> destList = target instanceof ApiCollection c ? c.items : ((CollectionNode) target).children;
+            int index = dropIndex;
             int srcIndex = srcList.indexOf(node);
             srcList.remove(node);
             if (index < 0 || index > destList.size()) index = destList.size();
@@ -607,7 +616,6 @@ public class CollectionsPanel extends JPanel {
             rebuild();
             select(id);
             frame.collectionsChanged();
-            return true;
         }
     }
 }

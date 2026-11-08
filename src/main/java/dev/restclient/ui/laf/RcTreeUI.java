@@ -46,6 +46,19 @@ public class RcTreeUI extends BasicTreeUI {
         return super.getRowX(row, depth) + Theme.scaled(ROW_LEAD);
     }
 
+    /**
+     * Where to draw the drop line while dragging rows. Swing's version throws if the drop location points at a
+     * row that's gone (the tree was rebuilt mid-drag: a save, a file change, a filter); then there's no line to draw.
+     */
+    @Override
+    protected java.awt.Rectangle getDropLineRect(javax.swing.JTree.DropLocation loc) {
+        try {
+            return super.getDropLineRect(loc);
+        } catch (RuntimeException stale) {
+            return new java.awt.Rectangle();
+        }
+    }
+
     /** Forgets cached row sizes (e.g. after the tree got narrower, so long names re-shorten to fit). */
     public void refreshSizes() {
         if (treeState != null) treeState.invalidateSizes();
