@@ -285,16 +285,25 @@ public class ResponsePanel extends JPanel {
         if (r.isBinary()) {
             String ct = r.contentType();
             ImageIcon icon = null;
-            if (ct.toLowerCase(Locale.ROOT).startsWith("image/") && !ct.contains("svg")) {
-                Image img = Toolkit.getDefaultToolkit().createImage(r.body);
-                icon = new ImageIcon(img);
-                if (icon.getIconWidth() > 900 || icon.getIconHeight() > 600) {
-                    double s = Math.min(900.0 / icon.getIconWidth(), 600.0 / icon.getIconHeight());
-                    icon = new ImageIcon(img.getScaledInstance((int) (icon.getIconWidth() * s), (int) (icon.getIconHeight() * s), Image.SCALE_SMOOTH));
+            boolean image = ct.toLowerCase(Locale.ROOT).startsWith("image/") && !ct.contains("svg");
+            if (image) {
+                // ImageIO decodes now and returns null (or throws) for damaged data, so a broken image gets a
+                // message instead of an empty area; Toolkit.createImage failed later, silently.
+                java.awt.image.BufferedImage img = null;
+                try {
+                    img = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(r.body));
+                } catch (java.io.IOException | RuntimeException e) {
+                    img = null;
+                }
+                if (img != null && img.getWidth() > 0 && img.getHeight() > 0) {
+                    double s = Math.min(1.0, Math.min(900.0 / img.getWidth(), 600.0 / img.getHeight()));
+                    icon = new ImageIcon(s < 1.0
+                            ? img.getScaledInstance((int) Math.max(1, img.getWidth() * s), (int) Math.max(1, img.getHeight() * s), Image.SCALE_SMOOTH)
+                            : img);
                 }
             }
             binaryLabel.setIcon(icon);
-            binaryLabel.setText(icon == null ? "Binary content" : null);
+            binaryLabel.setText(icon != null ? null : image ? "This image couldn't be previewed" : "Binary content");
             binaryInfo.setText((ct.isBlank() ? "binary" : ct) + " · " + Formatters.size(r.body.length));
             prettyText = null;
             rawText = null;

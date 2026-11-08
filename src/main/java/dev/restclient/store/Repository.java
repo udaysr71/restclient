@@ -261,8 +261,18 @@ public final class Repository {
         return old;
     }
 
+    /**
+     * Puts entries back (Undo for Delete Entry and Clear History). They're merged into the current history by
+     * time, so entries recorded since aren't lost; this used to replace the whole history with just the
+     * restored entries, so undoing one deletion erased everything else.
+     */
     public void restoreHistory(List<HistoryEntry> entries) {
-        history = new ArrayList<>(entries);
+        List<HistoryEntry> merged = new ArrayList<>(history);
+        for (HistoryEntry e : entries) if (!merged.contains(e)) merged.add(e);
+        merged.sort(java.util.Comparator.comparingLong((HistoryEntry h) -> h.timestamp).reversed());
+        int limit = Math.max(1, settings.historyLimit);
+        while (merged.size() > limit) merged.remove(merged.size() - 1);
+        history = merged;
         saveHistory();
     }
 
@@ -327,12 +337,18 @@ public final class Repository {
     }
 
     /** Waits for pending writes (on exit and in tests). */
+    /**
+     * Waits (up to 10 s) for every queued write to reach the disk. The writer keeps running afterwards, so saves
+     * made after a flush still happen (shutting it down here used to drop them silently).
+     */
     public void flush() {
-        writer.shutdown();
         try {
-            writer.awaitTermination(10, TimeUnit.SECONDS);
+            writer.submit(() -> { }).get(10, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+        } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException
+                 | java.util.concurrent.RejectedExecutionException e) {
+            // nothing more we can do; the writes in flight will finish or fail on their own
         }
     }
 

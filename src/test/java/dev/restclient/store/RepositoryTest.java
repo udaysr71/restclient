@@ -112,4 +112,53 @@ class RepositoryTest {
         assertEquals("orders-api-12345678.json", Repository.fileName("Orders API!", "1234-5678-90"));
         assertEquals("untitled-abc.json", Repository.fileName("   ", "abc"));
     }
+
+    /** flush() waits for pending writes but keeps the writer alive, so later saves still reach the disk. */
+    @Test
+    void savesAfterFlushStillReachTheDisk() throws Exception {
+        Path base = Files.createTempDirectory("rc-flush");
+        Repository repo = new Repository(new AppPaths(base));
+        repo.load();
+        dev.restclient.model.ApiCollection c = new dev.restclient.model.ApiCollection();
+        c.name = "Before";
+        repo.addCollection(c);
+        repo.flush();
+        c.name = "After flush";
+        repo.saveCollection(c);
+        repo.flush();
+        Repository again = new Repository(new AppPaths(base));
+        again.load();
+        assertEquals("After flush", again.collections().get(0).name);
+    }
+
+    /** Undo of a single history deletion puts that entry back and keeps all the others. */
+    @Test
+    void restoringHistoryMergesInsteadOfReplacing() throws Exception {
+        Repository repo = new Repository(new AppPaths(Files.createTempDirectory("rc-hist")));
+        repo.load();
+        List<dev.restclient.model.HistoryEntry> made = new java.util.ArrayList<>();
+        for (int i = 0; i < 4; i++) {
+            dev.restclient.model.HistoryEntry h = new dev.restclient.model.HistoryEntry();
+            h.timestamp = 1000 + i;
+            h.sentUrl = "http://x/" + i;
+            repo.addHistory(h);
+            made.add(h);
+        }
+        dev.restclient.model.HistoryEntry victim = made.get(2);
+        repo.removeHistory(victim);
+        assertEquals(3, repo.history().size());
+        repo.restoreHistory(List.of(victim));
+        assertEquals(4, repo.history().size(), "every entry is still there");
+        assertEquals(victim, repo.history().get(1), "back in its place by time");
+
+        List<dev.restclient.model.HistoryEntry> cleared = repo.clearHistory();
+        dev.restclient.model.HistoryEntry newer = new dev.restclient.model.HistoryEntry();
+        newer.timestamp = 5000;
+        repo.addHistory(newer);
+        repo.restoreHistory(cleared);
+        assertEquals(5, repo.history().size(), "undoing Clear keeps entries recorded since");
+        assertEquals(newer, repo.history().get(0));
+        repo.restoreHistory(cleared);
+        assertEquals(5, repo.history().size(), "restoring twice doesn't duplicate");
+    }
 }

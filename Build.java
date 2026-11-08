@@ -45,6 +45,11 @@ public class Build {
                 jar();
                 run(List.of(javaBin(), "-jar", JAR.toString()));
             }
+            case "featurecheck" -> {
+                compileMain();
+                compile(ROOT.resolve("src/test/java"), TEST_CLASSES, CLASSES.toString());
+                featureCheck(CLASSES + java.io.File.pathSeparator + TEST_CLASSES);
+            }
             case "uicheck" -> {
                 compileMain();
                 uiCheck();
@@ -55,7 +60,7 @@ public class Build {
                 jar();
             }
             default -> {
-                System.err.println("Unknown task: " + task + " (use all, jar, test, uicheck, run or clean)");
+                System.err.println("Unknown task: " + task + " (use all, jar, test, uicheck, featurecheck, run or clean)");
                 System.exit(2);
             }
         }
@@ -105,6 +110,18 @@ public class Build {
         int code = run(List.of(javaBin(), "-cp", cp, "dev.restclient.ui.InteractionCheck"));
         if (code != 0) {
             System.err.println("UI check failed.");
+            System.exit(code);
+        }
+        featureCheck(cp);
+    }
+
+    /** End-to-end feature check against a local HTTP/HTTPS server, then a restart on the same data folder. */
+    static void featureCheck(String cp) throws Exception {
+        Path home = Files.createTempDirectory("rc-features");
+        int code = run(List.of(javaBin(), "-cp", cp, "dev.restclient.ui.FeatureCheck", "--home", home.toString()));
+        if (code == 0) code = run(List.of(javaBin(), "-cp", cp, "dev.restclient.ui.FeatureCheck", "--relaunch", home.toString()));
+        if (code != 0) {
+            System.err.println("Feature check failed.");
             System.exit(code);
         }
     }

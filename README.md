@@ -237,18 +237,34 @@ Build.java              JDK-only build script
 ## Tests
 
 ```bash
-java Build.java test
-java Build.java uicheck      # needs a display; on Linux CI: xvfb-run java Build.java uicheck
+java Build.java test           # 94 unit tests
+java Build.java uicheck        # needs a display; on Linux CI: xvfb-run java Build.java uicheck
+java Build.java featurecheck   # just the end-to-end feature check
 ```
 
-`uicheck` launches the real app against a local server and drives it with real key presses and mouse
-clicks (76 checks). Beyond the list below, it also covers the Save state rules, empty-URL handling,
-keyboard reachability, Reopen Closed Tab, keyboard context menus, delete with Undo, and an accessible-name
-audit. It covers: typing, Backspace, arrows, Home/End, select-all and undo in the URL field, `{{` autocomplete,
-query → Params sync, send, find, method combo with the keyboard, editing and toggling header rows, typing
-JSON and Beautify, new/close tab, palette navigation with arrows and Enter, pasting cURL, the environment
-menu, settings check boxes and spinners, adding a variable, zoom and theme switching. It fails on any
-uncaught exception. `dev.restclient.ui.Gallery` opens every control on one page (pass `dark`, `sepia` or
+`uicheck` runs two suites against the real app, driving it with real key presses and mouse clicks:
+
+- **Interaction check** (98 checks): editing in fields and tables, `{{` autocomplete, the method combo, the
+  palette with arrow keys, tab menus and drag-to-reorder, keyboard reachability, Save state rules, empty-URL
+  handling, delete with Undo, zoom, themes and theme files, fonts, and an accessible-name audit.
+- **Feature check** (204 checks). It runs against a local HTTP and HTTPS server (self-signed certificate made
+  with `keytool`) that records every request, so it checks what the server actually received and what was
+  saved to disk:
+  - every method and body type, and headers and Basic/Bearer auth
+  - variable precedence and environment switching, and the undefined-variable "Define…" flow
+  - pretty, raw and headers views, find and copy
+  - XML, HTML, binary, gzip, charsets, 204/4xx/5xx and a large response
+  - connection errors, timeouts and Cancel
+  - the untrusted-certificate flow, retrying without verification, and Trust & Save
+  - cURL copy → import → send round trips
+  - collections, folders, rename, duplicate, delete and undo, and filter
+  - Save, Save As and dirty state
+  - history: filters, chips, delete and clear with undo
+  - environments and secrets, palette prefixes, tabs, Settings, and the help dialogs
+  - restarting on the same data folder brings back tabs, unsaved drafts, the environment, theme, zoom,
+    collections, history and certificates.
+
+Both fail on any uncaught exception. `dev.restclient.ui.Gallery` opens every control on one page (pass `dark`, `sepia` or
 `solarized_dark` for another theme), for checking components one at a time.
 
 Covers the JSON library, the cURL parser and exporter (including export → import round trips), variable resolution and
