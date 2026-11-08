@@ -28,8 +28,14 @@ public final class App {
 
         Splash.progress(0.15);
         Repository repo = new Repository(AppPaths.defaultPaths());
+        // a brand-new data folder means a first launch: start with the sample collection to explore
+        boolean firstLaunch = !java.nio.file.Files.exists(repo.paths().base());
         try {
             repo.load();
+            if (firstLaunch && repo.collections().isEmpty()) {
+                repo.addCollection(dev.restclient.store.Samples.httpbin());
+                repo.addEnvironment(dev.restclient.store.Samples.localEnvironment());
+            }
             Splash.progress(0.45);
         } catch (Exception e) {
             fatal("Couldn't open the data folder " + AppPaths.display(repo.paths().base()) + ":\n" + e.getMessage());

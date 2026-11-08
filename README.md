@@ -39,6 +39,8 @@ test kit — is in this repository, and the build needs nothing but a JDK. See [
   rows as `Name: Value` lines, right-click offers Copy Value / Name / Row / All Headers, and the Copy button
   copies them all. Drag the column divider to resize; double-click it to fit the names.
 - cURL import (paste into any URL field, or the import dialog) and export
+- Postman import and export: collections (v2.0 and v2.1) and environments
+- A sample collection that tours every feature against httpbin.org (added on first launch)
 - TLS: extra trusted certificates and client certificates from `~/.restclient/certs`,
   a "Trust this certificate" flow, and per-request or default "skip verification" (certificate **and** hostname)
 - Command palette (⌘K / Ctrl+K), Light, Dark, Solarized Sepia and Solarized Dark themes (or follow the OS), choosable interface and code fonts, tabs and drafts restored on relaunch
@@ -175,6 +177,65 @@ verified requests, so it is deliberately **not** used. Verified and skipped requ
 - **Export:** ⋯ › *Copy as cURL* (⌥⌘C / Ctrl+Alt+C) resolves variables with the active environment;
   *Copy as cURL (keep {{variables}})* leaves them as placeholders. `-k` is added when verification is skipped.
 
+## Sample collection
+
+A first launch starts with **Sample: httpbin**, a guided tour of the app against
+[httpbin.org](https://httpbin.org). That's a free service that echoes back what you send, so you can see the
+headers, bodies and auth that actually went out. Its first request is open, ready to send. *Help › Add Sample
+Collection* adds a fresh copy any time.
+
+| Folder | What it shows |
+|---|---|
+| 1 · Basics | GET, query params (one disabled), custom headers (one disabled), PUT, PATCH, DELETE, HEAD, OPTIONS |
+| 2 · Request bodies | JSON (try Beautify), XML, plain text and URL-encoded forms, with variables inside |
+| 3 · Auth | Basic auth that works and one that gets 401, a Bearer token from a secret variable, a missing token |
+| 4 · Responses | JSON, XML, HTML, an image, gzip, response headers to copy, a 3-hop redirect, 404, 500, UTF-8 |
+| 5 · Timeouts and errors | A slow request to cancel, a per-request timeout, connection refused, an unknown host |
+| 6 · Certificates | [badssl.com](https://badssl.com): self-signed (Trust or Retry Insecurely), wrong host, expired, verification off |
+| 7 · Variables | Hover popovers, environment overrides, an undefined variable to Define… |
+
+The collection's variables (`baseUrl`, `username`, a secret `password` and `token`, `userId`…) live on the
+collection. The **Local httpbin (Docker)** environment points it at a local copy instead: run
+`docker run -p 8080:80 kennethreitz/httpbin`, then switch to that environment. It also overrides `userId`,
+so the *Switch environment* request shows variables changing.
+
+Postman users can import the same tour from [`samples/httpbin.postman_collection.json`](samples/httpbin.postman_collection.json)
+and [`samples/local-httpbin.postman_environment.json`](samples/local-httpbin.postman_environment.json).
+Postman has no per-request timeout, so that one request runs without its 2 s limit there.
+`java Build.java samples` regenerates both files from
+[`Samples.java`](src/main/java/dev/restclient/store/Samples.java), and a unit test fails if they drift apart.
+
+## Postman
+
+**Import:** File › *Import from Postman…* takes a Postman collection (v2.0 or v2.1) or a Postman
+environment file, and works out which it is. It's added next to what you have, so nothing is replaced; a
+second import of the same file becomes "Shop API (2)".
+
+| From Postman | Becomes |
+|---|---|
+| Folders, requests, methods, headers (including disabled ones) | The same |
+| URL as text or as parts; disabled query params; `:id` path variables | The URL, disabled params kept disabled, path variables filled in |
+| Raw bodies (JSON, XML, text), `x-www-form-urlencoded` | JSON, XML, Text, Form bodies |
+| GraphQL body | A JSON body of `{"query", "variables"}` |
+| Basic and Bearer auth, including auth set on a folder or the collection | Auth on each request that inherits it; *No Auth* overrides |
+| API-key auth | A header or query parameter |
+| Collection variables (secret ones stay secret) | Collection variables |
+| "SSL certificate verification" off | Skip verification for that request |
+| `{{variables}}` | Unchanged; the syntax is the same |
+
+What can't come across is listed after the import (the status bar's *Details*): pre-request and test
+scripts, form-data file uploads and binary bodies, saved example responses, and other auth types
+(OAuth, Digest, AWS…). Multipart text fields are kept as a URL-encoded form. Postman's dynamic
+variables (`{{$guid}}`) are sent as written.
+
+**Export:** File › *Export Collection to Postman…*, or right-click a collection › *Export to Postman…*,
+writes a Collection v2.1 file that Postman imports directly. URLs are written in Postman's parts form, so
+Params show up there. Environments export from the Environments dialog (⋯ › *Export to Postman…*). If an
+environment has secrets, you're asked whether to include their values; by default they're left empty.
+
+Imported files are treated as untrusted. They're read by the app's own JSON parser (nesting is limited)
+and capped at 50 MB, and names are cleaned so they can't contain control characters or render as HTML.
+
 ## Keyboard shortcuts
 
 | Action | macOS | Windows / Linux |
@@ -240,7 +301,7 @@ Build.java              JDK-only build script
 ## Tests
 
 ```bash
-java Build.java test           # 94 unit tests
+java Build.java test           # 108 unit tests
 java Build.java uicheck        # needs a display; on Linux CI: xvfb-run java Build.java uicheck
 java Build.java featurecheck   # just the end-to-end feature check
 ```
@@ -250,7 +311,7 @@ java Build.java featurecheck   # just the end-to-end feature check
 - **Interaction check** (98 checks): editing in fields and tables, `{{` autocomplete, the method combo, the
   palette with arrow keys, tab menus and drag-to-reorder, keyboard reachability, Save state rules, empty-URL
   handling, delete with Undo, zoom, themes and theme files, fonts, and an accessible-name audit.
-- **Feature check** (213 checks). It runs against a local HTTP and HTTPS server (self-signed certificate made
+- **Feature check** (233 checks). It runs against a local HTTP and HTTPS server (self-signed certificate made
   with `keytool`) that records every request, so it checks what the server actually received and what was
   saved to disk:
   - every method and body type, and headers and Basic/Bearer auth
@@ -350,6 +411,10 @@ Checked against Nielsen's ten heuristics and WCAG 2.1 AA:
 - **Screen readers.** Icon-only buttons and fields have accessible names. The UI check fails if one doesn't.
 
 ## Look and feel notes
+
+- **File dialogs** (import, export, save response, save certificate) are the operating system's own: Explorer on
+  Windows, GTK on Linux, Finder on macOS. They look and behave like every other app's and follow the system theme.
+  Swing's file chooser isn't used: on the Basic look and feel it has no file list, and a unit test keeps it out.
 
 **Appearance.** Five choices in View › Appearance, Settings › General, or by right-clicking the sun/moon
 button: *Match System*, *Light*, *Dark*, *Solarized Sepia*, *Solarized Dark*, and any theme files of your own (below). The two Solarized themes use

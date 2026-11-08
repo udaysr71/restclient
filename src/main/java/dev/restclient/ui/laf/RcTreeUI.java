@@ -46,6 +46,17 @@ public class RcTreeUI extends BasicTreeUI {
         return super.getRowX(row, depth) + Theme.scaled(ROW_LEAD);
     }
 
+    /** Forgets cached row sizes (e.g. after the tree got narrower, so long names re-shorten to fit). */
+    public void refreshSizes() {
+        if (treeState != null) treeState.invalidateSizes();
+        updateSize();
+    }
+
+    /** The x where a row's content starts, for renderers that size themselves to the space left. */
+    public int contentX(int depth) {
+        return getRowX(-1, depth);
+    }
+
     /** Repaints the selection (it's dimmer without focus). Removed again on uninstall, e.g. a theme switch. */
     private final java.awt.event.FocusListener focusRepaint = new java.awt.event.FocusAdapter() {
         @Override

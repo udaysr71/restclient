@@ -57,4 +57,25 @@ class HelpersTest {
         assertEquals("142 ms", Formatters.duration(142));
         assertEquals("1.8 s", Formatters.duration(1800));
     }
+
+    /**
+     * The app never uses Swing's JFileChooser: on top of the Basic look and feel it has no file list, so it opened
+     * as an empty box. File dialogs go through FileChoosers, which uses the operating system's own.
+     */
+    @Test
+    void noSwingFileChooserAnywhereInTheApp() throws Exception {
+        java.nio.file.Path src = java.nio.file.Path.of("src/main/java");
+        if (!java.nio.file.Files.isDirectory(src)) return;
+        java.util.List<String> offenders = new java.util.ArrayList<>();
+        try (var files = java.nio.file.Files.walk(src)) {
+            for (java.nio.file.Path f : files.filter(x -> x.toString().endsWith(".java")).toList()) {
+                for (String line : java.nio.file.Files.readAllLines(f)) {
+                    String code = line.strip();
+                    if (code.startsWith("*") || code.startsWith("//") || code.startsWith("/*")) continue;
+                    if (code.contains("JFileChooser")) offenders.add(f.getFileName() + ": " + code);
+                }
+            }
+        }
+        dev.restclient.testkit.Assertions.assertTrue(offenders.isEmpty(), offenders.toString());
+    }
 }

@@ -56,7 +56,13 @@ public class CollectionsPanel extends JPanel {
     private final MainFrame frame;
     private final DefaultMutableTreeNode root = new DefaultMutableTreeNode();
     private final DefaultTreeModel model = new DefaultTreeModel(root);
-    private final JTree tree = new JTree(model);
+    /** Always as wide as the sidebar: long names shorten with "…" instead of scrolling the tree sideways. */
+    private final JTree tree = new JTree(model) {
+        @Override
+        public boolean getScrollableTracksViewportWidth() {
+            return true;
+        }
+    };
     private final JTextField filter = Ui.searchField(Ui.placeholder(new JTextField(), "Filter"));
     private final CardLayout cards = new CardLayout();
     private final JPanel content = new JPanel(cards);
@@ -148,7 +154,17 @@ public class CollectionsPanel extends JPanel {
         tree.setTransferHandler(new MoveHandler());
 
         JScrollPane sp = new JScrollPane(tree);
+        sp.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
         sp.setBorder(BorderFactory.createEmptyBorder());
+        // when the sidebar is resized, rows re-measure so names shorten or lengthen to fit
+        sp.getViewport().addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                if (tree.getUI() instanceof dev.restclient.ui.laf.RcTreeUI ui) ui.refreshSizes();
+                tree.repaint();
+            }
+        });
+        javax.swing.ToolTipManager.sharedInstance().registerComponent(tree);
         sp.setOpaque(false);
         sp.getViewport().setOpaque(false);
         content.setOpaque(false);
@@ -412,6 +428,7 @@ public class CollectionsPanel extends JPanel {
             item(m, "Variables…", () -> frame.showEnvironments(c.id, null, false));
             item(m, "Rename…", () -> frame.renameCollection(c));
             item(m, "Duplicate", () -> frame.duplicateCollection(c));
+            item(m, "Export to Postman…", () -> frame.exportCollection(c));
             m.addSeparator();
             item(m, "Delete…", () -> frame.deleteCollection(c));
         } else if (o instanceof CollectionNode n && n.folder) {
@@ -457,12 +474,24 @@ public class CollectionsPanel extends JPanel {
             add(left, BorderLayout.WEST);
             add(name, BorderLayout.CENTER);
             setBorder(Ui.pad(0, 2, 0, 6));
+            // names can come from imported files: always plain text, never HTML
+            name.putClientProperty("html.disable", Boolean.TRUE);
+        }
+
+        private int maxWidth = Integer.MAX_VALUE;
+
+        @Override
+        public java.awt.Dimension getPreferredSize() {
+            java.awt.Dimension d = super.getPreferredSize();
+            d.width = Math.min(d.width, maxWidth);
+            return d;
         }
 
         @Override
         public Component getTreeCellRendererComponent(JTree tree, Object value, boolean selected, boolean expanded,
                                                       boolean leaf, int row, boolean hasFocus) {
             Object o = ((DefaultMutableTreeNode) value).getUserObject();
+            maxWidth = Integer.MAX_VALUE;
             name.setForeground(selected && tree.hasFocus() ? javax.swing.UIManager.getColor("Tree.selectionForeground") : Theme.text());
             name.setFont(tree.getFont());
             if (o instanceof ApiCollection c) {
@@ -487,6 +516,17 @@ public class CollectionsPanel extends JPanel {
             } else {
                 name.setText(String.valueOf(o));
             }
+            // fit the row in the visible width; the name label then shows "…", and the full name on hover
+            int full = super.getPreferredSize().width;
+            int avail = Integer.MAX_VALUE;
+            java.awt.Container port = tree.getParent();
+            int visible = port instanceof javax.swing.JViewport v ? v.getWidth() : tree.getWidth();
+            if (visible > 0 && tree.getUI() instanceof dev.restclient.ui.laf.RcTreeUI ui) {
+                avail = visible - ui.contentX(((DefaultMutableTreeNode) value).getLevel()) - Theme.scaled(8);
+            }
+            maxWidth = Math.max(Theme.scaled(60), avail);
+            String tip = name.getText();
+            setToolTipText(full > maxWidth ? (tip.regionMatches(true, 0, "<html", 0, 5) ? "\u200B" + tip : tip) : null);
             return this;
         }
     }

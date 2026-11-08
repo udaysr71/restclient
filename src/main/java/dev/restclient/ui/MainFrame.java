@@ -882,6 +882,120 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
         status("Copied “" + n.name + "” as cURL", null, null);
     }
 
+    // ---- Postman ---------------------------------------------------------------------------
+
+    /** File › Import from Postman…: a collection or an environment file (the kind is detected). */
+    public void importPostman() {
+        java.io.File f = FileChoosers.openJson(this, "Import from Postman");
+        if (f != null) importPostman(f.toPath());
+    }
+
+    public void importPostman(java.nio.file.Path file) {
+        dev.restclient.postman.Postman.Result r;
+        try {
+            if (java.nio.file.Files.size(file) > dev.restclient.postman.Postman.MAX_BYTES) {
+                Ui.error(this, "Couldn't import", "“" + file.getFileName() + "” is larger than 50 MB.");
+                return;
+            }
+            r = dev.restclient.postman.Postman.read(java.nio.file.Files.readString(file, java.nio.charset.StandardCharsets.UTF_8));
+        } catch (dev.restclient.postman.Postman.ImportException e) {
+            Ui.error(this, "Couldn't import “" + file.getFileName() + "”", e.getMessage());
+            return;
+        } catch (java.io.IOException | RuntimeException e) {
+            Ui.error(this, "Couldn't read “" + file.getFileName() + "”", e.getMessage() == null ? e.toString() : e.getMessage());
+            return;
+        }
+        if (r.isCollection()) {
+            ApiCollection c = r.collection();
+            c.name = uniqueName(c.name, ctx.repo.collections().stream().map(x -> x.name).toList());
+            ctx.repo.addCollection(c);
+            sidebar.collections().expandedIds().add(c.id);
+            showSidebar("collections");
+            sidebar.collections().rebuild();
+            sidebar.collections().select(c.id);
+            String what = "Imported “" + c.name + "”: " + r.requests() + (r.requests() == 1 ? " request" : " requests")
+                    + (r.folders() > 0 ? " in " + r.folders() + (r.folders() == 1 ? " folder" : " folders") : "");
+            if (r.notes().isEmpty()) {
+                status(what, "Undo", () -> ctx.repo.deleteCollection(c));
+            } else {
+                status(what + " · " + r.notes().size() + (r.notes().size() == 1 ? " thing" : " things") + " to know",
+                        "Details", () -> importNotes(c.name, r.notes()));
+            }
+        } else {
+            Environment e = r.environment();
+            e.name = uniqueName(e.name, ctx.repo.environments().stream().map(x -> x.name).toList());
+            ctx.repo.addEnvironment(e);
+            variablesChanged();
+            status("Imported environment “" + e.name + "” (" + e.variables.size() + (e.variables.size() == 1 ? " variable)" : " variables)"),
+                    "Use It", () -> switchEnvironment(e));
+        }
+    }
+
+    private void importNotes(String name, List<String> notes) {
+        StringBuilder b = new StringBuilder("<html><div style='width:420px'>");
+        for (String n : notes) b.append("• ").append(Ui.escape(n)).append("<br><br>");
+        Ui.message(this, b.append("</div></html>").toString(), "Imported “" + name + "”", javax.swing.JOptionPane.INFORMATION_MESSAGE, null);
+    }
+
+    /** "Shop API", or "Shop API (2)" if that's taken. */
+    static String uniqueName(String name, List<String> taken) {
+        if (!taken.contains(name)) return name;
+        for (int i = 2; ; i++) if (!taken.contains(name + " (" + i + ")")) return name + " (" + i + ")";
+    }
+
+    /** Export to Postman: the given collection, or the selected one (asking if it's unclear). */
+    public void exportCollection(ApiCollection c) {
+        if (c == null) c = sidebar.collections().selectedCollection();
+        if (c == null) {
+            RequestTab t = currentRequestTab();
+            if (t != null && t.collectionId() != null) c = ctx.repo.collection(t.collectionId());
+        }
+        if (c == null) {
+            List<ApiCollection> all = ctx.repo.collections();
+            if (all.isEmpty()) {
+                Ui.message(this, "There are no collections to export yet.", "Export to Postman", javax.swing.JOptionPane.INFORMATION_MESSAGE, null);
+                return;
+            }
+            javax.swing.JComboBox<String> pick = new javax.swing.JComboBox<>(all.stream().map(x -> x.name).toArray(String[]::new));
+            pick.getAccessibleContext().setAccessibleName("Collection");
+            int r = Ui.option(this, new Object[]{"Which collection?", pick}, "Export to Postman",
+                    javax.swing.JOptionPane.PLAIN_MESSAGE, new Object[]{"Export…", "Cancel"}, "Export…");
+            if (r != 0) return;
+            c = all.get(Math.max(0, pick.getSelectedIndex()));
+        }
+        java.io.File f = FileChoosers.save(this, "Export “" + c.name + "” to Postman",
+                dev.restclient.postman.Postman.fileName(c.name, "collection"));
+        if (f == null) return;
+        writeExport(f, dev.restclient.postman.Postman.writeCollection(c), "Exported “" + c.name + "”");
+    }
+
+    /** Export an environment to a Postman environment file, asking whether secret values go in it. */
+    public void exportEnvironment(Environment e, java.awt.Component parent) {
+        boolean include = false;
+        if (e.variables.stream().anyMatch(v -> v.secret && !v.value.isEmpty())) {
+            Object[] options = {"Leave Secrets Empty", "Include Secrets", "Cancel"};
+            int r = Ui.option(parent, "<html><div style='width:360px'>“" + Ui.escape(e.name) + "” has secret variables. "
+                    + "Include their values in the file?<br><br>Anyone with the file can read them.</div></html>",
+                    "Export to Postman", javax.swing.JOptionPane.QUESTION_MESSAGE, options, options[0]);
+            if (r < 0 || r == 2) return;
+            include = r == 1;
+        }
+        java.io.File f = FileChoosers.save(parent, "Export “" + e.name + "” to Postman",
+                dev.restclient.postman.Postman.fileName(e.name, "environment"));
+        if (f == null) return;
+        writeExport(f, dev.restclient.postman.Postman.writeEnvironment(e, include), "Exported environment “" + e.name + "”");
+    }
+
+    private void writeExport(java.io.File f, String json, String what) {
+        try {
+            java.nio.file.Files.writeString(f.toPath(), json, java.nio.charset.StandardCharsets.UTF_8);
+            java.nio.file.Path dir = f.toPath().toAbsolutePath().getParent();
+            status(what + " to " + f.getName(), "Show in Folder", () -> SettingsDialog.reveal(dir));
+        } catch (java.io.IOException ex) {
+            Ui.error(this, "Couldn't save the file", ex.getMessage());
+        }
+    }
+
     public void collectionsChanged() {
         updateBreadcrumb();
     }
@@ -1216,6 +1330,8 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
         action("new", "New Request", Keys.NEW_TAB, this::newTab);
         action("newCollection", "New Collection…", Keys.NEW_COLLECTION, this::newCollection);
         action("import", "Import cURL…", Keys.IMPORT_CURL, () -> showCurlImport(null));
+        action("importPostman", "Import from Postman…", null, this::importPostman);
+        action("exportPostman", "Export Collection to Postman…", null, () -> exportCollection(null));
         action("save", "Save", Keys.SAVE, () -> withTab(t -> saveTab(t, false)));
         action("saveAs", "Save As…", Keys.SAVE_AS, () -> withTab(t -> saveTab(t, true)));
         action("close", "Close Tab", Keys.CLOSE_TAB, this::closeCurrentTab);
@@ -1260,6 +1376,7 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
         action("clearHistory", "Clear History…", null, this::clearHistory);
         action("shortcuts", "Keyboard Shortcuts", null, this::showShortcuts);
         action("quickStart", "Quick Start", null, this::showQuickStart);
+        action("addSample", "Add Sample Collection", null, this::addSampleCollection);
         action("undo", "Undo", Keys.UNDO, () -> VarSupport.undo(focusOwner())).putValue("rc.hideInPalette", true);
         action("redo", "Redo", Keys.REDO, () -> VarSupport.redo(focusOwner())).putValue("rc.hideInPalette", true);
         action("about", "About REST Client", null, this::showAbout);
@@ -1280,7 +1397,7 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
     private JMenuBar buildMenuBar() {
         JMenuBar mb = new JMenuBar();
         JMenu file = new JMenu("File");
-        add(file, "new", "newCollection", "import", null, "save", "saveAs", null, "close");
+        add(file, "new", "newCollection", null, "import", "importPostman", "exportPostman", null, "save", "saveAs", null, "close");
         if (!Platform.isMac()) add(file, null, "settings", null, "quit");
         JMenu edit = new JMenu("Edit");
         add(edit, "undo", "redo", null);
@@ -1321,7 +1438,7 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
         JMenu window = new JMenu("Window");
         add(window, "palette", null, "nextTab", "prevTab", null, "duplicateTab", "reopenTab", null, "closeOthers", "closeAll");
         JMenu help = new JMenu("Help");
-        add(help, "quickStart", "shortcuts", null, "dataFolder", "certsFolder");
+        add(help, "quickStart", "shortcuts", "addSample", null, "dataFolder", "certsFolder");
         if (!Platform.isMac()) add(help, null, "about");
         mb.add(file);
         mb.add(edit);
@@ -1368,6 +1485,22 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
     }
 
     /** A one-screen guide to the things people look for first (help and documentation, Nielsen #10). */
+    /** Help › Add Sample Collection: a fresh copy of the httpbin tour (and its local environment, if missing). */
+    public void addSampleCollection() {
+        ApiCollection c = dev.restclient.store.Samples.httpbin();
+        c.name = uniqueName(c.name, ctx.repo.collections().stream().map(x -> x.name).toList());
+        ctx.repo.addCollection(c);
+        if (ctx.repo.environments().stream().noneMatch(e -> e.name.equals(dev.restclient.store.Samples.LOCAL_ENV))) {
+            ctx.repo.addEnvironment(dev.restclient.store.Samples.localEnvironment());
+            variablesChanged();
+        }
+        sidebar.collections().expandedIds().add(c.id);
+        showSidebar("collections");
+        sidebar.collections().rebuild();
+        sidebar.collections().select(c.id);
+        status("Added “" + c.name + "”. Open a request and press " + Keys.label(Keys.SEND) + ".", "Undo", () -> ctx.repo.deleteCollection(c));
+    }
+
     private void showQuickStart() {
         String[][] tips = {
                 {"Send a request", "Type or paste a URL, pick the method, press " + Keys.label(Keys.SEND) + "."},
@@ -1379,6 +1512,9 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
                 {"Find anything", Keys.label(Keys.PALETTE) + " searches requests, environments, history and commands."},
                 {"Certificates", "Self-signed or internal CA? Trust the certificate from the error screen, or put it in the "
                         + "certs folder. You can also skip verification per request."},
+                {"Explore the sample", "“" + dev.restclient.store.Samples.NAME + "” in the sidebar walks through every feature "
+                        + "against httpbin.org, a free service that echoes your requests back. Help › Add Sample Collection "
+                        + "brings it back if you delete it."},
                 {"Undo mistakes", "Deleted something? Use Undo in the status bar. Closed a tab? " + Keys.label(Keys.REOPEN_TAB)
                         + " reopens it."},
         };
@@ -1434,11 +1570,16 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
         if (!s.sidebarVisible) toggleSidebar();
         sidebar.showTab(s.sidebarTab);
         List<String> expanded = new ArrayList<>(s.expandedNodes);
-        if (expanded.isEmpty() && !java.nio.file.Files.exists(ctx.repo.paths().session())) {
-            // First launch: show everything.
+        boolean firstLaunch = expanded.isEmpty() && !java.nio.file.Files.exists(ctx.repo.paths().session());
+        if (firstLaunch) {
+            // First launch: show each collection; the sample opens only its first folder, so the list stays short.
             for (ApiCollection c : ctx.repo.collections()) {
                 expanded.add(c.id);
-                collectFolders(c.items, expanded);
+                if (c.name.equals(dev.restclient.store.Samples.NAME)) {
+                    if (!c.items.isEmpty() && c.items.get(0).folder) expanded.add(c.items.get(0).id);
+                } else {
+                    collectFolders(c.items, expanded);
+                }
             }
         }
         sidebar.collections().setExpandedIds(expanded);
@@ -1459,6 +1600,15 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
                 tab.setDividerRatio(s.responseDivider);
             }
             if (s.selectedTab >= 0 && s.selectedTab < tabs.getTabCount()) tabs.setSelectedIndex(s.selectedTab);
+        }
+        if (firstLaunch && tabs.getTabCount() == 0) {
+            // ...and its first request is open, ready to send
+            for (ApiCollection c : ctx.repo.collections()) {
+                if (c.name.equals(dev.restclient.store.Samples.NAME) && !c.items.isEmpty() && !c.items.get(0).children.isEmpty()) {
+                    openSaved(c, c.items.get(0).children.get(0), false);
+                    break;
+                }
+            }
         }
     }
 

@@ -495,8 +495,11 @@ public final class EnvironmentDialog {
             select(scope(Environment.GLOBALS_ID));
             frame.variablesChanged();
         });
+        JMenuItem export = new JMenuItem("Export to Postman…");
+        export.addActionListener(a -> frame.exportEnvironment(e, dialog));
         m.add(rename);
         m.add(color);
+        m.add(export);
         m.addSeparator();
         m.add(delete);
         return m;

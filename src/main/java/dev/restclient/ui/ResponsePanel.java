@@ -11,7 +11,6 @@ import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComponent;
-import javax.swing.JFileChooser;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JProgressBar;
@@ -27,7 +26,6 @@ import javax.swing.table.DefaultTableModel;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Dimension;
-import java.awt.FileDialog;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.Frame;
@@ -396,6 +394,12 @@ public class ResponsePanel extends JPanel {
                 detail = r.errorMessage + " (" + timeout.toSeconds() + " s). You can raise the timeout in this request's Settings tab.";
                 options.add(Ui.row(0, Ui.button("Retry", e -> actions.retry())));
             }
+            case PROXY -> {
+                headline = "The proxy wouldn't connect to " + host;
+                detail = r.errorMessage + ". Requests go through the proxy set for Java (https.proxyHost) or the system. "
+                        + "Ask whoever runs it to allow this host, or turn off “Use the system proxy settings” in Settings › Network.";
+                options.add(Ui.row(0, Ui.button("Retry", e -> actions.retry())));
+            }
             case CONNECT -> {
                 headline = "Couldn't connect to " + host;
                 detail = "Nothing accepted the connection. Check that the server is running and the port is right.";
@@ -667,16 +671,6 @@ public class ResponsePanel extends JPanel {
 
     /** Native save dialog on macOS, Swing chooser elsewhere. */
     static File chooseSaveFile(java.awt.Component parent, String name) {
-        Window w = javax.swing.SwingUtilities.getWindowAncestor(parent);
-        if (Platform.isMac() && w instanceof Frame f) {
-            FileDialog fd = new FileDialog(f, "Save", FileDialog.SAVE);
-            fd.setFile(name);
-            fd.setVisible(true);
-            if (fd.getFile() == null) return null;
-            return new File(fd.getDirectory(), fd.getFile());
-        }
-        JFileChooser fc = new JFileChooser();
-        fc.setSelectedFile(new File(System.getProperty("user.home"), name));
-        return fc.showSaveDialog(parent) == JFileChooser.APPROVE_OPTION ? fc.getSelectedFile() : null;
+        return FileChoosers.save(parent, "Save Response", name);
     }
 }

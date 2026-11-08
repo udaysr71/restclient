@@ -8,14 +8,12 @@ import javax.swing.BoxLayout;
 import javax.swing.ButtonGroup;
 import javax.swing.JCheckBox;
 import javax.swing.JDialog;
-import javax.swing.JFileChooser;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JRadioButton;
 import javax.swing.JTextField;
 import java.awt.BorderLayout;
 import java.awt.Dimension;
-import java.awt.FileDialog;
 import java.awt.Font;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
@@ -207,18 +205,7 @@ public final class TrustCertDialog {
 
     private void choose() {
         Path current = target();
-        File chosen;
-        if (Platform.isMac()) {
-            FileDialog fd = new FileDialog(frame, "Save Certificate", FileDialog.SAVE);
-            fd.setDirectory(ctx.tls.certsDir().toString());
-            fd.setFile(current.getFileName().toString());
-            fd.setVisible(true);
-            chosen = fd.getFile() == null ? null : new File(fd.getDirectory(), fd.getFile());
-        } else {
-            JFileChooser fc = new JFileChooser(ctx.tls.certsDir().toFile());
-            fc.setSelectedFile(current.toFile());
-            chosen = fc.showSaveDialog(dialog) == JFileChooser.APPROVE_OPTION ? fc.getSelectedFile() : null;
-        }
+        File chosen = FileChoosers.save(dialog, "Save Certificate", current.getFileName().toString(), ctx.tls.certsDir().toFile());
         if (chosen != null) {
             String p = chosen.getPath();
             if (!p.toLowerCase(Locale.ROOT).matches(".*\\.(pem|crt|cer)$")) p += ".pem";

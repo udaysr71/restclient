@@ -10,7 +10,7 @@ import java.util.Map;
 
 /** Result of sending a request: either a response or a classified error. */
 public final class ResponseData {
-    public enum ErrorKind { TLS_UNTRUSTED, TLS_HOSTNAME, TLS_OTHER, TIMEOUT, CONNECT, DNS, CANCELLED, INVALID, OTHER }
+    public enum ErrorKind { TLS_UNTRUSTED, TLS_HOSTNAME, TLS_OTHER, TIMEOUT, CONNECT, DNS, PROXY, CANCELLED, INVALID, OTHER }
 
     public final int status;
     public final List<KeyValue> headers;

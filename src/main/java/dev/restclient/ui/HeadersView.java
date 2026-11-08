@@ -299,6 +299,8 @@ final class HeadersView extends JPanel {
         Renderer() {
             setOpaque(true);
             setBorder(Ui.pad(0, 10, 0, 10));
+            // header values come from servers: show them as text, never as HTML (which can load remote images)
+            putClientProperty("html.disable", Boolean.TRUE);
         }
 
         @Override
@@ -313,7 +315,8 @@ final class HeadersView extends JPanel {
             // a long value shows in full on hover
             FontMetrics fm = getFontMetrics(getFont());
             int avail = t.getColumnModel().getColumn(col).getWidth() - 20;
-            setToolTipText(fm.stringWidth(s) > avail ? s : null);
+            // tooltips render HTML too; a zero-width space in front keeps "<html>…" values as plain text
+            setToolTipText(fm.stringWidth(s) > avail ? (s.regionMatches(true, 0, "<html", 0, 5) ? "\u200B" + s : s) : null);
             return this;
         }
     }

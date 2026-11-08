@@ -127,6 +127,13 @@ public final class HttpService {
         return body;
     }
 
+    private static boolean unresolved(Throwable t) {
+        for (Throwable c = t; c != null; c = c.getCause()) {
+            if (c instanceof UnresolvedAddressException || c instanceof UnknownHostException) return true;
+        }
+        return false;
+    }
+
     static ResponseData classify(Throwable err, long ms, String host) {
         Throwable t = err;
         while ((t instanceof CompletionException || t instanceof java.util.concurrent.ExecutionException) && t.getCause() != null) {
@@ -146,6 +153,9 @@ public final class HttpService {
                 }
             }
         }
+        // an unknown host arrives as ConnectException → UnresolvedAddressException: look at the whole chain first,
+        // or it would be reported as "connection refused"
+        if (unresolved(t)) return ResponseData.failed(ResponseData.ErrorKind.DNS, t, "Couldn't find host " + host, ms, host);
         for (Throwable c = t; c != null; c = c.getCause()) {
             if (c instanceof SSLException) {
                 return ResponseData.failed(ResponseData.ErrorKind.TLS_OTHER, t, c.getMessage(), ms, host);
@@ -156,11 +166,14 @@ public final class HttpService {
             if (c instanceof HttpTimeoutException) {
                 return ResponseData.failed(ResponseData.ErrorKind.TIMEOUT, t, "No response before the timeout", ms, host);
             }
-            if (c instanceof UnresolvedAddressException || c instanceof UnknownHostException) {
-                return ResponseData.failed(ResponseData.ErrorKind.DNS, t, "Couldn't find host " + host, ms, host);
-            }
-            if (c instanceof ConnectException) {
+            if (c instanceof ConnectException && !unresolved(c)) {
                 return ResponseData.failed(ResponseData.ErrorKind.CONNECT, t, "Connection refused by " + host, ms, host);
+            }
+            // HttpClient's wording when an HTTP proxy won't open a tunnel for HTTPS (e.g. a blocked host)
+            java.util.regex.Matcher tunnel = java.util.regex.Pattern.compile("Tunnel failed, got: (\\d+)")
+                    .matcher(String.valueOf(c.getMessage()));
+            if (tunnel.find()) {
+                return ResponseData.failed(ResponseData.ErrorKind.PROXY, t, "The proxy answered " + tunnel.group(1), ms, host);
             }
         }
         return ResponseData.failed(ResponseData.ErrorKind.OTHER, t,

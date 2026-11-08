@@ -80,6 +80,15 @@ public final class FeatureCheck {
             e.printStackTrace();
             failures.add("uncaught on " + t.getName() + ": " + e);
         });
+        if (args.length == 2 && args[0].equals("--first-launch")) {
+            home = Path.of(args[1]);
+            if (Files.exists(home)) throw new IllegalStateException("--first-launch needs a folder that doesn't exist yet");
+            System.setProperty("restclient.home", home.toString());
+            launch();
+            firstLaunchChecks();
+            finish();
+            return;
+        }
         if (args.length == 2 && args[0].equals("--relaunch")) {
             home = Path.of(args[1]);
             System.setProperty("restclient.home", home.toString());
@@ -99,7 +108,7 @@ public final class FeatureCheck {
                 FeatureCheck::responses, FeatureCheck::errorsTimeoutsAndCancel, FeatureCheck::tls,
                 FeatureCheck::curl, FeatureCheck::collections, FeatureCheck::saving, FeatureCheck::historySection,
                 FeatureCheck::environments, FeatureCheck::palette, FeatureCheck::tabsAndShortcuts,
-                FeatureCheck::settings, FeatureCheck::helpAndDialogs, FeatureCheck::throughTheUi, FeatureCheck::prepareRelaunch);
+                FeatureCheck::settings, FeatureCheck::helpAndDialogs, FeatureCheck::throughTheUi, FeatureCheck::postman, FeatureCheck::sampleCollection, FeatureCheck::prepareRelaunch);
         for (Runnable s : sections) {
             try {
                 s.run();
@@ -217,6 +226,16 @@ public final class FeatureCheck {
         SEEN.add(new Seen(ex.getRequestMethod(), path, headers, body));
         String p = ex.getRequestURI().getPath();
         try {
+            if (p.startsWith("/hb/")) {
+                try {
+                    httpbin(ex, p.substring(3), headers, body);
+                } catch (InterruptedException | java.io.IOException e) {
+                    throw e;
+                } catch (Exception e) {
+                    reply(ex, 500, "text/plain", String.valueOf(e).getBytes(StandardCharsets.UTF_8));
+                }
+                return;
+            }
             if (p.startsWith("/status/")) {
                 int code = Integer.parseInt(p.substring(8));
                 reply(ex, code, "application/json", ("{\"status\":" + code + "}").getBytes(StandardCharsets.UTF_8));
@@ -267,6 +286,82 @@ public final class FeatureCheck {
         } catch (java.io.IOException ignored) {
             // client went away (cancel or timeout tests)
         }
+    }
+
+    /** Enough of httpbin.org, with the same behaviour, to run the sample collection end to end. */
+    private static void httpbin(HttpExchange ex, String p, Map<String, String> headers, String body) throws Exception {
+        String m = ex.getRequestMethod();
+        String auth = headers.getOrDefault("authorization", "");
+        if (p.startsWith("/basic-auth/")) {
+            String[] up = p.substring(12).split("/");
+            String want = "Basic " + Base64.getEncoder().encodeToString((up[0] + ":" + (up.length > 1 ? up[1] : "")).getBytes(StandardCharsets.UTF_8));
+            if (want.equals(auth)) reply(ex, 200, "application/json", ("{\"authenticated\": true, \"user\": \"" + up[0] + "\"}").getBytes(StandardCharsets.UTF_8));
+            else {
+                ex.getResponseHeaders().add("WWW-Authenticate", "Basic realm=\"Fake Realm\"");
+                reply(ex, 401, "text/plain", new byte[0]);
+            }
+        } else if (p.equals("/bearer")) {
+            if (auth.startsWith("Bearer ") && auth.length() > 7) reply(ex, 200, "application/json", ("{\"authenticated\": true, \"token\": \"" + auth.substring(7) + "\"}").getBytes(StandardCharsets.UTF_8));
+            else reply(ex, 401, "text/plain", new byte[0]);
+        } else if (p.startsWith("/status/")) {
+            reply(ex, Integer.parseInt(p.substring(8)), "text/html; charset=utf-8", new byte[0]);
+        } else if (p.startsWith("/redirect/")) {
+            int n = Integer.parseInt(p.substring(10));
+            ex.getResponseHeaders().add("Location", n > 1 ? "/hb/redirect/" + (n - 1) : "/hb/get");
+            ex.sendResponseHeaders(302, -1);
+            ex.close();
+        } else if (p.startsWith("/delay/")) {
+            Thread.sleep(Long.parseLong(p.substring(7)) * 1000);
+            reply(ex, 200, "application/json", "{\"delayed\": true}".getBytes(StandardCharsets.UTF_8));
+        } else if (p.equals("/json")) {
+            reply(ex, 200, "application/json", "{\"slideshow\": {\"author\": \"Yours Truly\", \"slides\": [{\"title\": \"Wake up\"}]}}".getBytes(StandardCharsets.UTF_8));
+        } else if (p.equals("/xml")) {
+            reply(ex, 200, "application/xml", "<?xml version='1.0'?><slideshow title=\"Sample\"><slide><title>Wake up</title></slide></slideshow>".getBytes(StandardCharsets.UTF_8));
+        } else if (p.equals("/html")) {
+            reply(ex, 200, "text/html; charset=utf-8", "<!DOCTYPE html><html><body><h1>Herman Melville - Moby-Dick</h1></body></html>".getBytes(StandardCharsets.UTF_8));
+        } else if (p.equals("/image/png")) {
+            java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(10, 10, java.awt.image.BufferedImage.TYPE_INT_RGB);
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            javax.imageio.ImageIO.write(img, "png", bos);
+            reply(ex, 200, "image/png", bos.toByteArray());
+        } else if (p.equals("/gzip")) {
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            try (GZIPOutputStream gz = new GZIPOutputStream(bos)) {
+                gz.write("{\"gzipped\": true}".getBytes(StandardCharsets.UTF_8));
+            }
+            ex.getResponseHeaders().add("Content-Encoding", "gzip");
+            reply(ex, 200, "application/json", bos.toByteArray());
+        } else if (p.equals("/response-headers")) {
+            String q = ex.getRequestURI().getRawQuery();
+            if (q != null) {
+                for (String part : q.split("&")) {
+                    int eq = part.indexOf('=');
+                    if (eq > 0) ex.getResponseHeaders().add(part.substring(0, eq), java.net.URLDecoder.decode(part.substring(eq + 1), StandardCharsets.UTF_8));
+                }
+            }
+            reply(ex, 200, "application/json", "{}".getBytes(StandardCharsets.UTF_8));
+        } else if (p.equals("/encoding/utf8")) {
+            reply(ex, 200, "text/html; charset=utf-8", "∮ E⋅da = Q, ℝ, ᚻᛖ ᚳᚹᚫᚦ, Ελληνικά".getBytes(StandardCharsets.UTF_8));
+        } else if (p.equals("/get") || p.equals("/post") || p.equals("/put") || p.equals("/patch") || p.equals("/delete")
+                || p.equals("/headers") || p.startsWith("/anything")) {
+            String expected = p.startsWith("/anything") || p.equals("/headers") || p.equals("/get") && (m.equals("HEAD") || m.equals("OPTIONS"))
+                    ? m : p.substring(1).toUpperCase(Locale.ROOT);
+            if (!p.startsWith("/anything") && !p.equals("/headers") && !m.equals("OPTIONS") && !m.equals("HEAD") && !m.equals(expected)) {
+                reply(ex, 405, "text/html", new byte[0]);
+                return;
+            }
+            if (m.equals("OPTIONS")) ex.getResponseHeaders().add("Allow", "GET, HEAD, OPTIONS");
+            String json = "{\"method\": \"" + m + "\", \"data\": " + quote(body) + "}";
+            reply(ex, 200, "application/json", m.equals("OPTIONS") ? new byte[0] : json.getBytes(StandardCharsets.UTF_8));
+        } else {
+            reply(ex, 404, "text/html", new byte[0]);
+        }
+    }
+
+    private static String quote(String s) {
+        StringBuilder b = new StringBuilder();
+        dev.restclient.json.Json.quote(b, s);
+        return b.toString();
     }
 
     private static String query(HttpExchange ex, String key, String def) {
@@ -738,7 +833,7 @@ public final class FeatureCheck {
 
         url(t, "http://no-such-host.invalid/x");
         send(t);
-        check("An unknown host explains itself", () -> responseSays(t, "Couldn't find") || responseSays(t, "Couldn't connect"));
+        check("An unknown host says it couldn't find the host (not \"connection refused\")", () -> responseSays(t, "Couldn't find"));
 
         JSpinnerHolder.set(t, 1);
         url(t, "{{baseUrl}}/slow?ms=3000");
@@ -1519,7 +1614,238 @@ public final class FeatureCheck {
         }
     }
 
-    // ------------------------------------------------------------------ 17. persistence
+    // ------------------------------------------------------------------ 17. Postman
+
+    private static final String POSTMAN_SAMPLE = """
+            { "info": { "name": "Shop API", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+              "auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "{{token}}" } ] },
+              "variable": [ { "key": "shopPath", "value": "shop" } ],
+              "item": [
+                { "name": "Orders", "item": [
+                  { "name": "List orders", "event": [ { "listen": "test", "script": { "exec": [ "pm.test('x', () => {})" ] } } ],
+                    "request": { "method": "GET", "header": [ { "key": "Accept", "value": "application/json" } ],
+                      "url": { "raw": "{{baseUrl}}/echo/{{shopPath}}/orders?status=open", "host": ["{{baseUrl}}"],
+                               "path": ["echo", "{{shopPath}}", "orders"],
+                               "query": [ { "key": "status", "value": "open" }, { "key": "debug", "value": "1", "disabled": true } ] } } },
+                  { "name": "Create order", "request": { "method": "POST", "url": "{{baseUrl}}/echo/{{shopPath}}/orders",
+                      "body": { "mode": "raw", "raw": "{\\"sku\\": \\"A1\\"}", "options": { "raw": { "language": "json" } } } } },
+                  { "name": "Attach", "request": { "method": "POST", "url": "{{baseUrl}}/echo/upload",
+                      "body": { "mode": "formdata", "formdata": [ { "key": "f", "type": "file", "src": "a.png" } ] } } }
+                ] }
+              ] }
+            """;
+
+    private static void postman() {
+        section("Postman: import a collection, send from it, export it, re-import it; environments too");
+        Path sample = home.resolve("shop.postman_collection.json");
+        try {
+            Files.writeString(sample, POSTMAN_SAMPLE);
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException(e);
+        }
+        check("File menu has Import from Postman and Export Collection to Postman", () -> {
+            javax.swing.JMenu file = frame.getJMenuBar().getMenu(0);
+            List<String> items = new ArrayList<>();
+            for (int i = 0; i < file.getItemCount(); i++) if (file.getItem(i) != null) items.add(file.getItem(i).getText());
+            return items.contains("Import from Postman…") && items.contains("Export Collection to Postman…");
+        });
+        edt(() -> frame.importPostman(sample));
+        ApiCollection shop = collection("Shop API");
+        check("Importing creates the collection with its folder and requests", () -> shop != null && shop.items.size() == 1
+                && shop.items.get(0).folder && shop.items.get(0).children.size() == 3);
+        check("...and says what was imported and that there's something to know", () -> anyLabel(frame.getContentPane(),
+                x -> x.contains("Imported “Shop API”: 3 requests in 1 folder")) && visibleButton("Details") != null);
+        pressLater("Details");
+        check("Details lists what couldn't come across (the script and the file upload)", () -> dialogShowing(d ->
+                anyLabel(d, x -> x.contains("script") && x.contains("file upload"))));
+        closeDialogs();
+        check("Collection variables come across", () -> shop.variables.stream().anyMatch(v -> v.key.equals("shopPath") && v.value.equals("shop")));
+
+        CollectionNode list = call(() -> shop.items.get(0).children.get(0));
+        edt(() -> frame.openSaved(shop, list, false));
+        RequestTab t = currentTab();
+        HistoryEntry h = send(t);
+        verify("An imported request runs: URL, collection variable and query", lastSeen().path().equals("/echo/shop/orders?status=open"), lastSeen().path());
+        verify("...with the collection's inherited Bearer auth", "Bearer secret-abc-123".equals(lastSeen().header("Authorization")),
+                lastSeen().header("Authorization"));
+        verify("...and its headers", "application/json".equals(lastSeen().header("Accept")), lastSeen().header("Accept"));
+        check("Disabled query params stay disabled in the Params table", () -> {
+            KeyValueTable p = field(t, "paramsTable");
+            return p.getRows().stream().anyMatch(k -> k.key.equals("debug") && !k.enabled);
+        });
+
+        edt(() -> frame.importPostman(sample));
+        check("Importing the same file again makes “Shop API (2)”", () -> collection("Shop API (2)") != null);
+
+        // export through the real file chooser
+        Path out = home.resolve("exported.postman_collection.json");
+        // the native save dialog can't be driven by a robot, so the check stands in for it and records what was asked
+        String[] asked = new String[2];
+        FileChoosers.testPicker = (title, name) -> {
+            asked[0] = title;
+            asked[1] = name;
+            return out.toFile();
+        };
+        edt(() -> frame.exportCollection(shop));
+        check("Export asks where to save, suggesting shop-api.postman_collection.json", () -> "shop-api.postman_collection.json".equals(asked[1])
+                && asked[0].contains("Shop API"));
+        check("...and writes the file", () -> Files.exists(out) && readFile(out).contains("collection/v2.1.0"));
+        check("...and says where", () -> anyLabel(frame.getContentPane(), x -> x.contains("Exported “Shop API”")) && visibleButton("Show in Folder") != null);
+        edt(() -> frame.importPostman(out));
+        ApiCollection back = collection("Shop API (3)");
+        check("Re-importing the export gives the same structure", () -> back != null && back.items.get(0).children.size() == 3
+                && back.items.get(0).children.get(1).request.bodyType == BodyType.JSON
+                && back.items.get(0).children.get(0).request.disabledParams.size() == 1);
+        if (back != null) {
+            edt(() -> frame.openSaved(back, back.items.get(0).children.get(0), false));
+            Seen before = lastSeen();
+            send(currentTab());
+            verify("...and sends exactly the same request", lastSeen().path().equals(before.path())
+                    && String.valueOf(lastSeen().header("Authorization")).equals(before.header("Authorization")), lastSeen() + " vs " + before);
+        }
+
+        // environments: export without secrets, import back
+        Environment staging = env("Staging");
+        Path envOut = home.resolve("staging.postman_environment.json");
+        FileChoosers.testPicker = (title, name) -> envOut.toFile();
+        later(() -> frame.exportEnvironment(staging, frame));
+        check("Exporting an environment with secrets asks whether to include them", () -> visibleButton("Leave Secrets Empty") != null);
+        pressLater("Leave Secrets Empty");
+        FileChoosers.testPicker = (title, name) -> envOut.toFile();
+        robot.delay(300);
+        check("The environment file leaves secret values out", () -> Files.exists(envOut) && readFile(envOut).contains("\"token\"")
+                && !readFile(envOut).contains("secret-abc-123"));
+        edt(() -> frame.importPostman(envOut));
+        check("Importing an environment file adds it as an environment", () -> env("Staging (2)") != null
+                && env("Staging (2)").variables.stream().anyMatch(v -> v.key.equals("token") && v.secret && v.value.isEmpty()));
+        press("Use It");
+        check("...and Use It switches to it", () -> ctx().repo.activeEnvironment() == env("Staging (2)"));
+        edt(() -> invoke(frame, "switchEnvironment", env("Staging")));
+
+        // File › Import from Postman… through the picker
+        FileChoosers.testPicker = (title, name) -> sample.toFile();
+        edt(frame::importPostman);
+        check("File › Import from Postman… imports the picked file", () -> collection("Shop API (4)") != null);
+        FileChoosers.testPicker = (title, name) -> null;
+        edt(frame::importPostman);
+        check("Cancelling the picker imports nothing", () -> collection("Shop API (5)") == null && !anyDialog());
+        FileChoosers.testPicker = null;
+        Path junk = home.resolve("not-postman.json");
+        try {
+            Files.writeString(junk, "{\"hello\": \"world\"}");
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException(e);
+        }
+        later(() -> frame.importPostman(junk));
+        check("A file that isn't from Postman is refused with a reason", () -> dialogShowing(d ->
+                anyLabel(d, x -> x.contains("doesn't look like a Postman"))));
+        closeDialogs();
+    }
+
+    // ------------------------------------------------------------------ 18. the sample collection
+
+    private static CollectionNode node(List<CollectionNode> nodes, String name) {
+        for (CollectionNode n : nodes) {
+            if (n.name.equals(name)) return n;
+            CollectionNode c = node(n.children, name);
+            if (c != null) return c;
+        }
+        return null;
+    }
+
+    /** What each sample request should give against httpbin (status, or the error kind). */
+    private static final Map<String, String> SAMPLE_EXPECT = Map.ofEntries(
+            Map.entry("Basic auth, wrong password", "401"), Map.entry("Bearer token missing", "401"),
+            Map.entry("Status 404", "404"), Map.entry("Status 500", "500"),
+            Map.entry("Times out (2 s limit)", "TIMEOUT"),
+            Map.entry("Connection refused", "CONNECT"),
+            // PROXY: where Java is set to use an HTTP proxy (like this check's sandbox), it answers for unknown hosts
+            Map.entry("Unknown host", "DNS|PROXY"));
+
+    private static void sampleCollection() {
+        section("The sample collection: Help › Add Sample Collection, then every request against a local httpbin");
+        edt(frame::addSampleCollection);
+        ApiCollection sample = collection(dev.restclient.store.Samples.NAME);
+        check("Help › Add Sample Collection adds it", () -> sample != null && sample.items.size() == 7);
+        check("...with the local httpbin environment", () -> env(dev.restclient.store.Samples.LOCAL_ENV) != null);
+        if (sample == null) return;
+        // point the sample's own local environment at our httpbin stand-in, and use it
+        Environment local = env(dev.restclient.store.Samples.LOCAL_ENV);
+        edt(() -> {
+            for (Variable v : local.variables) if (v.key.equals("baseUrl")) v.value = http + "/hb";
+            ctx().repo.saveEnvironment(local);
+            invoke(frame, "switchEnvironment", local);
+        });
+        int ran = 0;
+        List<String> wrong = new ArrayList<>();
+        for (CollectionNode folder : sample.items) {
+            if (folder.name.contains("Certificates")) continue; // badssl.com hosts: covered by the TLS section with a local server
+            for (CollectionNode n : folder.children) {
+                edt(() -> frame.openSaved(sample, n, false));
+                RequestTab t = currentTab();
+                int seen = SEEN.size();
+                HistoryEntry h = send(t);
+                ran++;
+                String got = h.errorKind != null ? h.errorKind : String.valueOf(h.status);
+                String want = SAMPLE_EXPECT.getOrDefault(n.name, "200");
+                if (!got.matches(want)) wrong.add(n.name + ": got " + got + ", expected " + want);
+                // the server saw what the request says
+                if (h.errorKind == null && !n.request.url.contains("localhost:1")) {
+                    Seen last = lastSeen();
+                    if (SEEN.size() == seen || !last.method().equals(n.request.method.name())) wrong.add(n.name + ": the server saw " + last);
+                }
+                edt(() -> frame.closeTab(tabStrip().getSelectedIndex()));
+                closeDialogs();
+            }
+        }
+        verify("All " + ran + " sample requests give the expected result", wrong.isEmpty(), String.join("; ", wrong));
+
+        // a few that show particular features
+        CollectionNode json = node(sample.items, "JSON body");
+        edt(() -> frame.openSaved(sample, json, false));
+        send(currentTab());
+        verify("The JSON sample resolves its variables in the body", lastSeen().body().contains("\"user\": \"demo\"")
+                && lastSeen().body().contains("\"id\": 42"), lastSeen().body());
+        CollectionNode bearer = node(sample.items, "Bearer token");
+        edt(() -> frame.openSaved(sample, bearer, false));
+        send(currentTab());
+        verify("The Bearer sample sends the secret token", "Bearer demo-token-123".equals(lastSeen().header("Authorization")), lastSeen().header("Authorization"));
+        CollectionNode switching = node(sample.items, "Switch environment");
+        edt(() -> frame.openSaved(sample, switching, false));
+        send(currentTab());
+        verify("With the local environment, userId comes from it (42)", lastSeen().path().endsWith("/users/42"), lastSeen().path());
+        CollectionNode redirect = node(sample.items, "Redirects (3 hops)");
+        edt(() -> frame.openSaved(sample, redirect, false));
+        int before = SEEN.size();
+        send(currentTab());
+        verify("The redirect sample follows all 3 hops", SEEN.size() - before == 4 && lastSeen().path().equals("/hb/get"), (SEEN.size() - before) + " requests");
+        CollectionNode headers = node(sample.items, "Response headers");
+        edt(() -> frame.openSaved(sample, headers, false));
+        send(currentTab());
+        check("The response-headers sample shows them in the Headers view", () -> {
+            HeadersView hv = field(response(currentTab()), "headersView");
+            return hv.allText().contains("X-rate-limit: 60") || hv.allText().toLowerCase(Locale.ROOT).contains("x-rate-limit: 60");
+        });
+        edt(() -> invoke(frame, "switchEnvironment", env("Staging")));
+
+        // the Postman copy in samples/ is the same collection
+        Path file = Path.of("samples", "httpbin.postman_collection.json");
+        if (Files.exists(file)) {
+            edt(() -> frame.importPostman(file));
+            check("samples/httpbin.postman_collection.json imports as the same collection", () -> {
+                ApiCollection imported = collection(dev.restclient.store.Samples.NAME + " (3)") != null
+                        ? collection(dev.restclient.store.Samples.NAME + " (3)") : collection(dev.restclient.store.Samples.NAME + " (2)");
+                int[] a = {0};
+                int[] b = {0};
+                sample.forEachRequest(x -> a[0]++);
+                if (imported == null) return false;
+                imported.forEachRequest(x -> b[0]++);
+                return a[0] == b[0] && imported.items.size() == 7;
+            });
+        }
+    }
+
+    // ------------------------------------------------------------------ 19. persistence
 
     private static final String DRAFT_URL = "{{baseUrl}}/echo/unsaved-draft";
 
@@ -1559,6 +1885,31 @@ public final class FeatureCheck {
             throw new IllegalStateException(e);
         }
         verify("Session saved (" + tabs + " tabs)", Files.exists(ctx().repo.paths().session()), null);
+    }
+
+    private static void firstLaunchChecks() {
+        section("First launch on a new data folder");
+        check("The sample collection is there", () -> collection(dev.restclient.store.Samples.NAME) != null);
+        check("...with the local httpbin environment, not switched on", () -> env(dev.restclient.store.Samples.LOCAL_ENV) != null
+                && ctx().repo.activeEnvironment() == null);
+        check("Its first request is open, ready to send", () -> currentTab() != null && currentTab().title().equals("Simple GET")
+                && currentTab().isSaved());
+        check("The sidebar shows the sample with only its first folder open", () -> {
+            CollectionsPanel cp = ((Sidebar) field(frame, "sidebar")).collections();
+            JTree tree = field(cp, "tree");
+            List<String> rows = new ArrayList<>();
+            for (int i = 0; i < tree.getRowCount(); i++) rows.add(String.valueOf(((javax.swing.tree.DefaultMutableTreeNode) tree.getPathForRow(i).getLastPathComponent()).getUserObject() instanceof CollectionNode n ? n.name : "collection"));
+            return rows.contains("Simple GET") && !rows.contains("JSON body") && rows.contains("7 · Variables");
+        });
+        check("The sidebar isn't scrolled sideways, and has no horizontal scroll bar", () -> {
+            CollectionsPanel cp = ((Sidebar) field(frame, "sidebar")).collections();
+            JTree tree = field(cp, "tree");
+            javax.swing.JScrollPane sp = (javax.swing.JScrollPane) javax.swing.SwingUtilities.getAncestorOfClass(javax.swing.JScrollPane.class, tree);
+            return tree.getVisibleRect().x == 0 && !sp.getHorizontalScrollBar().isVisible() && tree.getWidth() <= sp.getViewport().getWidth();
+        });
+        runLater("quickStart");
+        check("Quick Start mentions the sample", () -> dialogShowing(d -> anyLabel(d, s -> s.contains("Explore the sample"))));
+        closeDialogs();
     }
 
     private static void relaunchChecks() throws Exception {

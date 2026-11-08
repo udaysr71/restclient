@@ -1,0 +1,867 @@
+{
+  "info": {
+    "_postman_id": "8f6c2b1e-5a3d-4c7e-9b10-2f4e6a8c0d11",
+    "name": "Sample: httpbin",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1 · Basics",
+      "item": [
+        {
+          "name": "Simple GET",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/get",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "get"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Query parameters",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/get?search=rest%20client&page=2&sort=desc",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "get"
+              ],
+              "query": [
+                {
+                  "key": "search",
+                  "value": "rest%20client"
+                },
+                {
+                  "key": "page",
+                  "value": "2"
+                },
+                {
+                  "key": "sort",
+                  "value": "desc"
+                },
+                {
+                  "key": "debug",
+                  "value": "true",
+                  "disabled": true
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Custom headers",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Greeting",
+                "value": "{{greeting}}",
+                "type": "text"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-Not-Sent",
+                "value": "this row is disabled",
+                "type": "text",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/headers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "headers"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "PUT",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/put",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "put"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "PATCH",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/patch",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "patch"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "DELETE",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/delete",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "delete"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "HEAD (no body)",
+          "request": {
+            "method": "HEAD",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/get",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "get"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "OPTIONS",
+          "request": {
+            "method": "OPTIONS",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/get",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "get"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "2 · Request bodies",
+      "item": [
+        {
+          "name": "JSON body",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"user\": \"{{username}}\", \"id\": {{userId}}, \"tags\": [\"sample\", \"json\"], \"active\": true}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/post",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "post"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "XML body",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "<?xml version=\"1.0\"?>\n<order>\n  <id>{{userId}}</id>\n  <item sku=\"MUG-01\">Coffee mug</item>\n</order>",
+              "options": {
+                "raw": {
+                  "language": "xml"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/post",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "post"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Text body",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "Any text you like.\nVariables work here too: {{greeting}}",
+              "options": {
+                "raw": {
+                  "language": "text"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/post",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "post"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Form body",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "name",
+                  "value": "{{username}}",
+                  "type": "text"
+                },
+                {
+                  "key": "message",
+                  "value": "spaces & symbols are encoded",
+                  "type": "text"
+                },
+                {
+                  "key": "skipped",
+                  "value": "disabled rows aren't sent",
+                  "type": "text",
+                  "disabled": true
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/post",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "post"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "3 · Auth",
+      "item": [
+        {
+          "name": "Basic auth",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/basic-auth/{{username}}/{{password}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "basic-auth",
+                "{{username}}",
+                "{{password}}"
+              ]
+            },
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "{{username}}",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "{{password}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Basic auth, wrong password",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/basic-auth/{{username}}/{{password}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "basic-auth",
+                "{{username}}",
+                "{{password}}"
+              ]
+            },
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "{{username}}",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "not-the-password",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Bearer token",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/bearer",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bearer"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Bearer token missing",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/bearer",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bearer"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "4 · Responses",
+      "item": [
+        {
+          "name": "JSON",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/json",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "json"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "XML",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/xml",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "xml"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "HTML",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/html",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "html"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Image",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/image/png",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "image",
+                "png"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "gzip",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/gzip",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "gzip"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Response headers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/response-headers?X-Rate-Limit=60&Cache-Control=no-cache&X-Request-Id=sample-123",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "response-headers"
+              ],
+              "query": [
+                {
+                  "key": "X-Rate-Limit",
+                  "value": "60"
+                },
+                {
+                  "key": "Cache-Control",
+                  "value": "no-cache"
+                },
+                {
+                  "key": "X-Request-Id",
+                  "value": "sample-123"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Redirects (3 hops)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/redirect/3",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "redirect",
+                "3"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Status 404",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/status/404",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "status",
+                "404"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Status 500",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/status/500",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "status",
+                "500"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "UTF-8 text",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/encoding/utf8",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "encoding",
+                "utf8"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "5 · Timeouts and errors",
+      "item": [
+        {
+          "name": "Slow (3 s)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/delay/3",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "delay",
+                "3"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Times out (2 s limit)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/delay/5",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "delay",
+                "5"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Connection refused",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:1/",
+              "protocol": "http",
+              "port": "1",
+              "host": [
+                "localhost"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Unknown host",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "https://no-such-host.invalid/",
+              "protocol": "https",
+              "host": [
+                "no-such-host",
+                "invalid"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "6 · Certificates",
+      "item": [
+        {
+          "name": "Self-signed",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "https://self-signed.badssl.com/",
+              "protocol": "https",
+              "host": [
+                "self-signed",
+                "badssl",
+                "com"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Wrong host name",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "https://wrong.host.badssl.com/",
+              "protocol": "https",
+              "host": [
+                "wrong",
+                "host",
+                "badssl",
+                "com"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Expired",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "https://expired.badssl.com/",
+              "protocol": "https",
+              "host": [
+                "expired",
+                "badssl",
+                "com"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Verification off",
+          "protocolProfileBehavior": {
+            "strictSSL": false
+          },
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "https://self-signed.badssl.com/",
+              "protocol": "https",
+              "host": [
+                "self-signed",
+                "badssl",
+                "com"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "7 · Variables",
+      "item": [
+        {
+          "name": "Hover a variable",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/anything/users/{{userId}}?greeting={{greeting}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "anything",
+                "users",
+                "{{userId}}"
+              ],
+              "query": [
+                {
+                  "key": "greeting",
+                  "value": "{{greeting}}"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Switch environment",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/anything/users/{{userId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "anything",
+                "users",
+                "{{userId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Undefined variable",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/anything/{{notDefinedYet}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "anything",
+                "{{notDefinedYet}}"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://httpbin.org",
+      "type": "string"
+    },
+    {
+      "key": "username",
+      "value": "demo",
+      "type": "string"
+    },
+    {
+      "key": "password",
+      "value": "s3cret-pass",
+      "type": "secret"
+    },
+    {
+      "key": "token",
+      "value": "demo-token-123",
+      "type": "secret"
+    },
+    {
+      "key": "userId",
+      "value": "7",
+      "type": "string"
+    },
+    {
+      "key": "greeting",
+      "value": "hello from REST Client",
+      "type": "string"
+    }
+  ]
+}

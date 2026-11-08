@@ -45,6 +45,12 @@ public class Build {
                 jar();
                 run(List.of(javaBin(), "-jar", JAR.toString()));
             }
+            case "samples" -> {
+                compileMain();
+                int code = run(List.of(javaBin(), "-cp", CLASSES.toString(), "dev.restclient.store.Samples", ROOT.resolve("samples").toString()));
+                System.out.println(code == 0 ? "Wrote samples/httpbin.postman_collection.json and samples/local-httpbin.postman_environment.json"
+                        : "Couldn't write the samples.");
+            }
             case "featurecheck" -> {
                 compileMain();
                 compile(ROOT.resolve("src/test/java"), TEST_CLASSES, CLASSES.toString());
@@ -60,7 +66,7 @@ public class Build {
                 jar();
             }
             default -> {
-                System.err.println("Unknown task: " + task + " (use all, jar, test, uicheck, featurecheck, run or clean)");
+                System.err.println("Unknown task: " + task + " (use all, jar, test, uicheck, featurecheck, samples, run or clean)");
                 System.exit(2);
             }
         }
@@ -120,6 +126,10 @@ public class Build {
         Path home = Files.createTempDirectory("rc-features");
         int code = run(List.of(javaBin(), "-cp", cp, "dev.restclient.ui.FeatureCheck", "--home", home.toString()));
         if (code == 0) code = run(List.of(javaBin(), "-cp", cp, "dev.restclient.ui.FeatureCheck", "--relaunch", home.toString()));
+        if (code == 0) {
+            Path fresh = Files.createTempDirectory("rc-first").resolve("data");
+            code = run(List.of(javaBin(), "-cp", cp, "dev.restclient.ui.FeatureCheck", "--first-launch", fresh.toString()));
+        }
         if (code != 0) {
             System.err.println("Feature check failed.");
             System.exit(code);
