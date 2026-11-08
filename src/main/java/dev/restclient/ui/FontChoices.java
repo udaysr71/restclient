@@ -124,52 +124,80 @@ final class FontChoices {
         return box;
     }
 
-    /** The theme picker: each choice with a swatch of its page colour and accent. */
-    static JComboBox<Settings.ThemeMode> themeCombo(Settings.ThemeMode current, Consumer<Settings.ThemeMode> onPick,
-                                                    java.util.function.IntSupplier minWidth) {
+    /** The theme picker: each choice (built-in and the user's theme files) with a swatch of its colours. */
+    static JComboBox<Themes.Choice> themeCombo(Settings s, Consumer<Themes.Choice> onPick, java.util.function.IntSupplier minWidth) {
         // as wide as the font pickers below it, so the Appearance controls line up (and follow zoom)
-        JComboBox<Settings.ThemeMode> box = new JComboBox<>(Settings.ThemeMode.values()) {
+        JComboBox<Themes.Choice> box = new JComboBox<>() {
             @Override
             public java.awt.Dimension getPreferredSize() {
                 java.awt.Dimension d = super.getPreferredSize();
                 return new java.awt.Dimension(Math.max(d.width, minWidth.getAsInt()), d.height);
             }
         };
+        box.setMaximumRowCount(14);
         box.setRenderer(new DefaultListCellRenderer() {
             @Override
             public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean sel, boolean focus) {
-                Settings.ThemeMode m = (Settings.ThemeMode) value;
-                JLabel l = (JLabel) super.getListCellRendererComponent(list, m == null ? "" : m.label, index, sel, focus);
-                l.setIcon(m == null ? null : swatch(m));
+                Themes.Choice c = (Themes.Choice) value;
+                JLabel l = (JLabel) super.getListCellRendererComponent(list, c == null ? "" : c.label(), index, sel, focus);
+                l.putClientProperty("html.disable", Boolean.TRUE); // names come from files: never render them as HTML
+                l.setIcon(c == null ? null : swatch(c));
                 l.setIconTextGap(8);
                 l.setBorder(BorderFactory.createEmptyBorder(3, 6, 3, 6));
                 return l;
             }
         });
-        box.setSelectedItem(current);
+        boolean[] filling = {false};
+        Runnable fill = () -> {
+            filling[0] = true;
+            try {
+                box.removeAllItems();
+                Themes.Choice selected = null;
+                for (Themes.Choice c : Themes.choices()) {
+                    box.addItem(c);
+                    if (c.matches(s)) selected = c;
+                }
+                // a theme file that's gone still shows as chosen, so the setting isn't silently changed
+                if (selected == null && s.theme == Settings.ThemeMode.CUSTOM) {
+                    String shown = ThemeFile.isId(s.customTheme) ? s.customTheme + " (missing)" : "Missing theme";
+                selected = new Themes.Choice(Settings.ThemeMode.CUSTOM, s.customTheme, shown);
+                    box.addItem(selected);
+                }
+                box.setSelectedItem(selected);
+            } finally {
+                filling[0] = false;
+            }
+        };
+        fill.run();
+        box.putClientProperty("rc.refill", fill);
         box.addActionListener(e -> {
-            if (box.getSelectedItem() instanceof Settings.ThemeMode m) onPick.accept(m);
+            if (!filling[0] && box.getSelectedItem() instanceof Themes.Choice c && !c.matches(s)) onPick.accept(c);
         });
         return box;
     }
 
+    /** Re-reads the choices (after theme files change) and reselects the current one. */
+    static void refill(JComboBox<?> box) {
+        if (box.getClientProperty("rc.refill") instanceof Runnable r) r.run();
+    }
+
     /** A small circle: page colour with an accent dot, split light/dark for "Match System". */
-    static Icon swatch(Settings.ThemeMode m) {
+    static Icon swatch(Themes.Choice choice) {
         return new Icon() {
             @Override
             public void paintIcon(Component c, Graphics g, int x, int y) {
                 Graphics2D g2 = Paint.smooth(g);
                 int s = getIconWidth();
-                if (m == Settings.ThemeMode.SYSTEM) {
-                    g2.setColor(Theme.Palette.LIGHT.swatchBg);
+                if (choice.mode() == Settings.ThemeMode.SYSTEM) {
+                    g2.setColor(Theme.Palette.LIGHT.swatchBg());
                     g2.fillArc(x, y, s, s, 90, 180);
-                    g2.setColor(Theme.Palette.DARK.swatchBg);
+                    g2.setColor(Theme.Palette.DARK.swatchBg());
                     g2.fillArc(x, y, s, s, 270, 180);
                 } else {
-                    Theme.Palette p = Theme.paletteFor(m);
-                    g2.setColor(p.swatchBg);
+                    Theme.Palette p = choice.palette();
+                    g2.setColor(p.swatchBg());
                     g2.fillOval(x, y, s, s);
-                    g2.setColor(p.swatchAccent);
+                    g2.setColor(p.swatchAccent());
                     int d = Math.round(s * 0.42f);
                     g2.fillOval(x + (s - d) / 2, y + (s - d) / 2, d, d);
                 }

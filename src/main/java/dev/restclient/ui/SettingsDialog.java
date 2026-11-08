@@ -150,17 +150,47 @@ public final class SettingsDialog {
         Form f = new Form();
         f.heading("Appearance");
         javax.swing.JComboBox<?>[] fontBox = new javax.swing.JComboBox<?>[1];
-        javax.swing.JComboBox<Settings.ThemeMode> theme = FontChoices.themeCombo(s.theme, m -> {
-            if (m == s.theme) return;
-            s.theme = m;
-            ctx.repo.saveSettings();
-            frame.applyTheme();
-        }, () -> fontBox[0] == null ? 0 : fontBox[0].getPreferredSize().width);
+        javax.swing.JComboBox<Themes.Choice> theme = FontChoices.themeCombo(s, c -> frame.setAppearance(c),
+                () -> fontBox[0] == null ? 0 : fontBox[0].getPreferredSize().width);
         theme.getAccessibleContext().setAccessibleName("Theme");
         f.row("Theme", theme);
-        Theme.onChange(() -> {
-            if (theme.getSelectedItem() != s.theme) theme.setSelectedItem(s.theme);
-        });
+        // problems in the chosen theme file (bad values, typos, low contrast), and the theme-file commands
+        JLabel themeIssues = Ui.small("");
+        themeIssues.setForeground(Theme.warnFg());
+        themeIssues.getAccessibleContext().setAccessibleName("Theme file problems");
+        Runnable showIssues = () -> {
+            Theme.Palette p = Theme.palette();
+            themeIssues.setForeground(Theme.warnFg());
+            if (p.file == null || p.warnings.isEmpty()) {
+                themeIssues.setText("");
+                themeIssues.setVisible(false);
+                return;
+            }
+            StringBuilder b = new StringBuilder("<html><div style='width:420px'><b>")
+                    .append(Ui.escape(p.file.getFileName().toString())).append(": ")
+                    .append(p.warnings.size()).append(p.warnings.size() == 1 ? " problem" : " problems").append("</b>");
+            int shown = 0;
+            for (String w : p.warnings) {
+                if (shown++ == 5) {
+                    b.append("<br>…and ").append(p.warnings.size() - 5).append(" more");
+                    break;
+                }
+                b.append("<br>• ").append(Ui.escape(w));
+            }
+            themeIssues.setText(b.append("</div></html>").toString());
+            themeIssues.setVisible(true);
+        };
+        showIssues.run();
+        f.full(themeIssues);
+        f.full(Ui.row(Theme.scaled(14),
+                Ui.linkButton("Export Current Theme…", e -> frame.exportTheme()),
+                Ui.linkButton("Open Themes Folder", e -> SettingsDialog.reveal(Themes.dir()))));
+        Runnable sync = () -> {
+            FontChoices.refill(theme);
+            showIssues.run();
+        };
+        Theme.onChange(sync);
+        Themes.onChange(sync);
         javax.swing.JComboBox<String> uiFont = FontChoices.combo(FontChoices.uiFamilies(), FontChoices.READABLE_UI,
                 s.uiFontFamily, Theme.defaultUiFamily(), fam -> {
                     if (java.util.Objects.equals(fam, s.uiFontFamily)) return;
@@ -180,7 +210,8 @@ public final class SettingsDialog {
                 });
         codeFont.getAccessibleContext().setAccessibleName("Code font");
         f.row("Code font", codeFont);
-        f.note("Code font is used for URLs, headers and bodies. Fonts made for easier reading, such as Atkinson "
+        f.note("Themes are .css files in " + AppPaths.display(Themes.dir()) + "; the app updates as you save one. "
+                + "Code font is used for URLs, headers and bodies. Fonts made for easier reading, such as Atkinson "
                 + "Hyperlegible, Lexend or OpenDyslexic, are listed first once installed. Size follows View \u203a Zoom.");
         JCheckBox reduce = new JCheckBox("Reduce motion", s.reduceMotion);
         reduce.addActionListener(e -> {

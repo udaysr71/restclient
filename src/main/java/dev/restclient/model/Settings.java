@@ -6,7 +6,9 @@ import java.util.Map;
 /** User preferences, stored in ~/.restclient/settings.json. */
 public class Settings {
     public enum ThemeMode {
-        SYSTEM("Match System"), LIGHT("Light"), DARK("Dark"), SEPIA("Solarized Sepia"), SOLARIZED_DARK("Solarized Dark");
+        SYSTEM("Match System"), LIGHT("Light"), DARK("Dark"), SEPIA("Solarized Sepia"), SOLARIZED_DARK("Solarized Dark"),
+        /** A theme file from ~/.restclient/themes, named by {@link Settings#customTheme}. */
+        CUSTOM("Custom");
 
         public final String label;
 
@@ -18,6 +20,8 @@ public class Settings {
     public ThemeMode theme = ThemeMode.SYSTEM;
     /** Text and control size, 1.0 = 100%. Changed with Zoom In / Zoom Out / Actual Size. */
     public double zoom = 1.0;
+    /** With theme CUSTOM: the theme file's name without ".css" (in ~/.restclient/themes). */
+    public String customTheme;
     /** Font for labels, menus and buttons; null = the platform's (San Francisco, Segoe UI…). */
     public String uiFontFamily;
     /** Font for URLs, bodies and code; null = the platform's monospaced font. */

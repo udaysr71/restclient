@@ -49,12 +49,20 @@ public final class InteractionCheck {
     private static final List<String> failures = new ArrayList<>();
     private static final List<Throwable> edtErrors = new ArrayList<>();
     private static int passed;
+    private static java.nio.file.Path homeDir;
     private static final boolean MAC = Platform.isMac();
     private static final int MOD = MAC ? KeyEvent.VK_META : KeyEvent.VK_CONTROL;
 
     public static void main(String[] args) throws Exception {
         java.nio.file.Path home = Files.createTempDirectory("rc-uicheck");
         System.setProperty("restclient.home", home.toString());
+        homeDir = home;
+        // a user theme file, present before launch
+        Files.createDirectories(home.resolve("themes"));
+        Files.writeString(home.resolve("themes/ocean.css"), """
+                @theme { name: "Ocean"; base: dark; }
+                :root { --panelBg: #0B2233; --accent: #2F6FB0; }
+                """);
         dev.restclient.store.Repository seed = new dev.restclient.store.Repository(new dev.restclient.store.AppPaths(home));
         seed.load();
         seed.globals().variables.add(new dev.restclient.model.Variable("baseUrl", "http://127.0.0.1"));
@@ -285,15 +293,19 @@ public final class InteractionCheck {
                 check("Spinner up arrow changes value", () -> !sp.getValue().equals(v));
             }
             JComboBox<?> themeBox = find(settings, JComboBox.class, c -> "Theme".equals(c.getAccessibleContext().getAccessibleName()));
-            check("Settings theme picker lists all five themes", () -> themeBox != null && themeBox.getItemCount() == 5);
+            check("Settings theme picker lists five built-in themes and the user's", () -> themeBox != null && themeBox.getItemCount() == 6
+                    && "Ocean".equals(((Themes.Choice) themeBox.getItemAt(5)).label()));
             JComboBox<?> uiFontBox = find(settings, JComboBox.class, c -> "Interface font".equals(c.getAccessibleContext().getAccessibleName()));
             JComboBox<?> codeFontBox = find(settings, JComboBox.class, c -> "Code font".equals(c.getAccessibleContext().getAccessibleName()));
             check("Settings has interface and code font pickers starting at Default", () -> uiFontBox != null && codeFontBox != null
                     && "".equals(uiFontBox.getSelectedItem()) && "".equals(codeFontBox.getSelectedItem()));
             if (themeBox != null) {
-                edt(() -> themeBox.setSelectedItem(Settings.ThemeMode.SOLARIZED_DARK));
+                edt(() -> themeBox.setSelectedIndex(4));
                 check("Choosing Solarized Dark in Settings applies it", () -> Theme.palette() == Theme.Palette.SOLARIZED_DARK);
-                edt(() -> themeBox.setSelectedItem(Settings.ThemeMode.LIGHT));
+                edt(() -> themeBox.setSelectedIndex(5));
+                check("Choosing a theme file in Settings applies it", () -> "ocean".equals(Theme.palette().id)
+                        && Theme.panelBg().getRGB() == 0xFF0B2233);
+                edt(() -> themeBox.setSelectedIndex(1));
                 check("Choosing Light in Settings applies it", () -> Theme.palette() == Theme.Palette.LIGHT);
             }
             click(find(settings, JSpinner.class, s -> s.isShowing()) == null ? settings.getContentPane() : find(find(settings, JSpinner.class, s -> s.isShowing()), JTextComponent.class));
@@ -605,6 +617,29 @@ public final class InteractionCheck {
         check("Toggle goes back to Sepia", () -> Theme.palette() == Theme.Palette.SEPIA);
         edt(() -> frame.setAppearance(Settings.ThemeMode.LIGHT));
         check("Back to Light", () -> Theme.palette() == Theme.Palette.LIGHT);
+
+        // ---- theme files: live reload, problems, removal
+        edt(() -> frame.setAppearance(Themes.choiceFor("ocean")));
+        check("Theme file applies from the menu choice", () -> Theme.palette().id.equals("ocean") && Theme.dark());
+        Files.writeString(homeDir.resolve("themes/ocean.css"), """
+                @theme { name: "Ocean"; base: dark; }
+                :root { --panelBg: #102A3D; --accent: #2F6FB0; --acent: #fff; }
+                """);
+        check("Saving the theme file updates the app", () -> Theme.panelBg().getRGB() == 0xFF102A3D, 6000);
+        check("Problems in the file are reported", () -> Theme.palette().warnings.stream().anyMatch(w -> w.contains("--accent?")));
+        Files.writeString(homeDir.resolve("themes/forest.css"), "@theme { name: \"Forest\"; base: light; toggle: ocean; } :root { --accent: #2E6B3A; }");
+        check("A new theme file shows up", () -> Themes.find("forest") != null, 6000);
+        edt(() -> frame.setAppearance(Themes.choiceFor("forest")));
+        click(field(frame, "themeToggle"));
+        check("Toggle follows the file's toggle: Forest → Ocean", () -> Theme.palette().id.equals("ocean"));
+        Files.delete(homeDir.resolve("themes/ocean.css"));
+        check("Deleting the theme in use falls back to Light", () -> Theme.palette() == Theme.Palette.LIGHT, 6000);
+        javax.swing.SwingUtilities.invokeLater(frame::exportTheme); // opens a modal prompt
+        robot.delay(400);
+        key(KeyEvent.VK_ENTER);
+        check("Export writes a complete theme file and switches to it", () -> Theme.palette().file != null
+                && Files.readString(Theme.palette().file).contains("--method-DELETE") && Theme.palette().warnings.isEmpty(), 4000);
+        edt(() -> frame.setAppearance(Settings.ThemeMode.LIGHT));
 
         // ---- font families: switching live changes the UI and code fonts, keeping sizes
         JTextComponent urlBox = (JTextComponent) field(currentTab(), "urlField");

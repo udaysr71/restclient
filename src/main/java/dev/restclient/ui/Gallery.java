@@ -219,7 +219,8 @@ public final class Gallery {
             // cycles Light → Dark → Solarized Sepia → Solarized Dark
             Settings.ThemeMode[] order = {Settings.ThemeMode.LIGHT, Settings.ThemeMode.DARK, Settings.ThemeMode.SEPIA,
                     Settings.ThemeMode.SOLARIZED_DARK};
-            Theme.apply(order[(Theme.palette().ordinal() + 1) % order.length], true);
+            int at = Theme.Palette.builtIns().indexOf(Theme.palette());
+            Theme.apply(order[(at + 1) % order.length], true);
         });
         grid.add(section("Dialogs · theme", Ui.row(8, dialogs, theme)));
 

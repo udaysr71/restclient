@@ -12,6 +12,7 @@ import dev.restclient.model.HttpMethod;
 import dev.restclient.model.RequestDef;
 import dev.restclient.model.Session;
 import dev.restclient.model.Settings;
+import dev.restclient.store.AppPaths;
 import dev.restclient.model.Variable;
 import dev.restclient.vars.VariableResolver;
 
@@ -71,7 +72,6 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
     private final JSplitPane split;
     /** Light/dark switch in the toolbar; right-click for "Match System". */
     private final JButton themeToggle = new JButton();
-    private final java.util.Map<Settings.ThemeMode, JRadioButtonMenuItem> appearanceItems = new java.util.EnumMap<>(Settings.ThemeMode.class);
     private final CardLayout contentCards = new CardLayout();
     private final JPanel content = new JPanel(contentCards);
     private final TabStrip tabs = new TabStrip();
@@ -172,6 +172,8 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
         });
         new Timer(30_000, e -> saveSession()).start();
         watchSystemAppearance();
+        Themes.watch();
+        Themes.onChange(this::themesChanged);
 
         restoreSession();
         syncAppearanceControls();
@@ -1031,54 +1033,97 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
         }, 3, 3, java.util.concurrent.TimeUnit.SECONDS);
     }
 
-    /** Flips light and dark within the current family: Light and Dark, or Solarized Sepia and Solarized Dark. */
+    /**
+     * Flips light and dark within the current family: Light and Dark, Solarized Sepia and Solarized Dark, or
+     * whatever a theme file names as its {@code toggle}.
+     */
     public void toggleAppearance() {
-        setAppearance(toggled(Theme.palette()));
-    }
-
-    static Settings.ThemeMode toggled(Theme.Palette p) {
-        return switch (p) {
-            case LIGHT -> Settings.ThemeMode.DARK;
-            case DARK -> Settings.ThemeMode.LIGHT;
-            case SEPIA -> Settings.ThemeMode.SOLARIZED_DARK;
-            case SOLARIZED_DARK -> Settings.ThemeMode.SEPIA;
-        };
+        setAppearance(Themes.toggled(Theme.palette()));
     }
 
     public void setAppearance(Settings.ThemeMode m) {
-        ctx.settings().theme = m;
+        setAppearance(new Themes.Choice(m, null, m.label));
+    }
+
+    public void setAppearance(Themes.Choice c) {
+        ctx.settings().theme = c.mode();
+        if (c.custom() != null) ctx.settings().customTheme = c.custom();
         ctx.repo.saveSettings();
         applyTheme();
     }
 
     private void appearanceMenu(MouseEvent e) {
         JPopupMenu menu = new JPopupMenu();
+        fillAppearance(menu, false);
+        Ui.showBelow(menu, themeToggle);
+    }
+
+    /** The theme choices (Match System; Light, Dark; Solarized; the user's), then theme-file commands. */
+    private void fillAppearance(java.awt.Container menu, boolean withCommands) {
+        menu.removeAll();
         ButtonGroup g = new ButtonGroup();
-        for (Settings.ThemeMode m : Settings.ThemeMode.values()) {
-            if (m == Settings.ThemeMode.LIGHT || m == Settings.ThemeMode.SEPIA) menu.addSeparator();
-            JRadioButtonMenuItem i = new JRadioButtonMenuItem(m.label, ctx.settings().theme == m);
-            i.addActionListener(ev -> setAppearance(m));
+        boolean userStarted = false;
+        for (Themes.Choice c : Themes.choices()) {
+            boolean user = c.mode() == Settings.ThemeMode.CUSTOM;
+            if (c.mode() == Settings.ThemeMode.LIGHT || c.mode() == Settings.ThemeMode.SEPIA || user && !userStarted) {
+                menu.add(new javax.swing.JPopupMenu.Separator());
+            }
+            userStarted |= user;
+            JRadioButtonMenuItem i = new JRadioButtonMenuItem(c.label(), c.matches(ctx.settings()));
+            i.putClientProperty("html.disable", Boolean.TRUE); // names come from theme files: plain text only
+            i.addActionListener(ev -> setAppearance(c));
             g.add(i);
             menu.add(i);
         }
-        Ui.showBelow(menu, themeToggle);
+        menu.add(new javax.swing.JPopupMenu.Separator());
+        if (withCommands) menu.add(new JMenuItem(actions.get("toggleAppearance")));
+        menu.add(new JMenuItem(actions.get("exportTheme")));
+        menu.add(new JMenuItem(actions.get("themesFolder")));
+    }
+
+    /** Saves the current colours as a theme file the user can edit, then switches to it. */
+    public void exportTheme() {
+        Theme.Palette p = Theme.palette();
+        String name = Ui.prompt(this, "Export Current Theme", "Theme name", p.label + " Custom");
+        if (name == null || name.isBlank()) return;
+        try {
+            java.nio.file.Path f = Themes.export(p, name.strip());
+            Themes.reload();
+            setAppearance(Themes.choiceFor(Themes.idOf(f)));
+            status("Saved " + AppPaths.display(f) + ". Edit it and the app updates as you save.", "Open Folder",
+                    () -> SettingsDialog.reveal(Themes.dir()));
+        } catch (java.io.IOException ex) {
+            Ui.error(this, "Couldn't export the theme", ex.getMessage());
+        }
+    }
+
+    /** A theme file changed on disk: re-apply if it's the one in use, and keep the controls in step. */
+    private void themesChanged() {
+        Settings st = ctx.settings();
+        if (st.theme == Settings.ThemeMode.CUSTOM) {
+            Theme.Palette now = Themes.find(st.customTheme);
+            if (now == null) {
+                status(ThemeFile.isId(st.customTheme) ? "The theme \"" + st.customTheme + "\" was removed, so Light is in use."
+                        : "The chosen theme isn't available, so Light is in use.", null, null);
+            }
+            Theme.apply(st.theme, st.customTheme, true);
+        }
+        syncAppearanceControls();
     }
 
     private void syncAppearanceControls() {
         boolean dark = Theme.dark();
         themeToggle.setIcon(Icons.get(dark ? "sun" : "moon"));
-        String next = "Switch to " + toggled(Theme.palette()).label;
+        String next = "Switch to " + Themes.toggled(Theme.palette()).label();
         String tip = next + " (" + Keys.label(Keys.TOGGLE_APPEARANCE) + ")"
                 + (ctx.settings().theme == Settings.ThemeMode.SYSTEM ? " · now matching the system" : "")
                 + " · right-click for more";
         themeToggle.setToolTipText(tip);
         themeToggle.getAccessibleContext().setAccessibleName(next);
-        JRadioButtonMenuItem item = appearanceItems.get(ctx.settings().theme);
-        if (item != null) item.setSelected(true);
     }
 
     public void applyTheme() {
-        Motion.crossfade(this, () -> Theme.apply(ctx.settings().theme, true));
+        Motion.crossfade(this, () -> Theme.apply(ctx.settings().theme, ctx.settings().customTheme, true));
         syncAppearanceControls();
         updateEnvButton();
         refreshStatus();
@@ -1204,6 +1249,11 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
         });
         action("closeAll", "Close All Tabs", null, () -> closeTabs(i -> true));
         action("prevTab", "Previous Tab", Keys.PREV_TAB, () -> cycleTab(-1));
+        action("exportTheme", "Export Current Theme…", null, this::exportTheme);
+        action("themesFolder", "Open Themes Folder", null, () -> {
+            Themes.watch();
+            SettingsDialog.reveal(Themes.dir());
+        });
         action("dataFolder", "Open Data Folder", null, () -> SettingsDialog.reveal(ctx.repo.paths().base()));
         action("certsFolder", "Open Certificates Folder", null, () -> SettingsDialog.reveal(ctx.tls.certsDir()));
         action("certificates", "Certificates…", null, () -> openSettings(SettingsDialog.CERTIFICATES));
@@ -1248,17 +1298,22 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
         JMenu view = new JMenu("View");
         add(view, "sidebar", "showCollections", "showHistory", null, "zoomIn", "zoomOut", "zoomReset", null);
         JMenu appearance = new JMenu("Appearance");
-        ButtonGroup g = new ButtonGroup();
-        for (Settings.ThemeMode m : Settings.ThemeMode.values()) {
-            if (m == Settings.ThemeMode.LIGHT || m == Settings.ThemeMode.SEPIA) appearance.addSeparator();
-            JRadioButtonMenuItem i = new JRadioButtonMenuItem(m.label, ctx.settings().theme == m);
-            i.addActionListener(e -> setAppearance(m));
-            appearanceItems.put(m, i);
-            g.add(i);
-            appearance.add(i);
-        }
-        appearance.addSeparator();
-        appearance.add(new JMenuItem(actions.get("toggleAppearance")));
+        // rebuilt each time it opens, so new and edited theme files show up
+        fillAppearance(appearance.getPopupMenu(), true);
+        appearance.addMenuListener(new javax.swing.event.MenuListener() {
+            @Override
+            public void menuSelected(javax.swing.event.MenuEvent e) {
+                fillAppearance(appearance.getPopupMenu(), true);
+            }
+
+            @Override
+            public void menuDeselected(javax.swing.event.MenuEvent e) {
+            }
+
+            @Override
+            public void menuCanceled(javax.swing.event.MenuEvent e) {
+            }
+        });
         view.add(appearance);
         JMenu request = new JMenu("Request");
         add(request, "send", null, "copyCurl", "copyCurlVars", null, "focusUrl", "toggleTls", null, "switchEnv", "manageEnv", null,

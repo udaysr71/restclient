@@ -1,0 +1,96 @@
+/*
+ * Solarized Sepia
+ *
+ * Solarized Light, warmed slightly toward paper, with darker text and accents so all text meets WCAG AA.
+ * Built on Ethan Schoonover's Solarized palette (MIT): https://ethanschoonover.com/solarized/
+ *
+ * This file ships inside the app and doubles as an example: copy it to ~/.restclient/themes/ under a
+ * new name, change what you like, and pick it in View › Appearance.
+ */
+
+@theme {
+  name: "Solarized Sepia";
+  base: light;
+  toggle: "solarized-dark";
+}
+
+:root {
+  /* Solarized */
+  --base03: #002B36;  --base02: #073642;  --base01: #586E75;  --base00: #657B83;
+  --base0: #839496;   --base1: #93A1A1;   --base2: #EEE8D5;   --base3: #FDF6E3;
+  --yellow: #B58900;  --orange: #CB4B16;  --red: #DC322F;     --magenta: #D33682;
+  --violet: #6C71C4;  --blue: #268BD2;    --cyan: #2AA198;    --green: #859900;
+
+  /* Accent: primary buttons, selection marks, focus */
+  --accent: #1F6FA8;                 /* Send and other primary buttons, checkboxes, the focus ring */
+  --accentHover: #1A6496;            /* primary button under the pointer */
+  --accentPressed: #15557F;          /* primary button while pressed */
+  --focusRing: #1F6FA859;            /* soft glow around a focused field (use some transparency) */
+  --link: #1F6FA8;                   /* links and the active tab underline */
+
+  /* Text */
+  --text: var(--base02);             /* body text */
+  --secondary: #52666D;              /* labels, hints, metadata */
+  --disabledText: #9AA3A0;           /* disabled controls */
+  --iconColor: var(--base01);        /* toolbar and sidebar icons */
+
+  /* Surfaces */
+  --panelBg: var(--base3);           /* main window background */
+  --editorBg: var(--base3);          /* request and response editors */
+  --codeBg: #FAF3DE;                 /* read-only code (response body) */
+  --sidebarBg: var(--base2);         /* collections and history sidebar */
+  --toolbarBg: #F3EDDA;              /* title bar and toolbar */
+  --subtleBg: #EAE3CE;               /* segmented controls, quiet panels */
+  --separator: #E2DBC5;              /* hairlines between areas */
+  --menuBg: #FFFBEF;                 /* menus and popups */
+  --tooltipBg: #FAF3DE;              /* tooltips and variable popovers */
+
+  /* Controls */
+  --fieldBg: #FFFBEF;                /* text fields */
+  --fieldBorder: #84928F;            /* text field outline (keep 3:1 against fieldBg) */
+  --buttonBg: #FFFBEF;               /* secondary buttons */
+  --buttonHover: #F3ECD8;            /* secondary button under the pointer */
+  --buttonPressed: #E4DCC3;          /* secondary button while pressed */
+  --segmentSelected: #FFFBEF;        /* the selected part of a segmented control */
+  --hoverSubtle: #657B831A;          /* row and icon hover (use transparency) */
+  --pressedSubtle: #657B832E;        /* row and icon press (use transparency) */
+  --selectionBg: #DCE7EC;            /* selected row in lists and trees */
+  --textSelection: #C9DDE6;          /* selected text */
+  --findMatch: #B5890066;            /* find-in-response highlight */
+
+  /* Status badges and banners */
+  --okBg: #E8EBC8;                   /* 2xx badge */
+  --okFg: #586800;                   /* 2xx text */
+  --infoBg: #DCE9F2;                 /* info banner */
+  --infoFg: #1C6596;                 /* info text */
+  --warnBg: #F6E7C0;                 /* warning banner */
+  --warnFg: #735600;                 /* warning text */
+  --warnIcon: var(--yellow);         /* warning icon */
+  --warnBorder: #D9B860;             /* warning outline */
+  --errBg: #F7DED5;                  /* error badge and banner */
+  --errFg: #A62820;                  /* error text and error outlines */
+
+  /* Variables ({{name}} in fields) */
+  --varOkBg: #E6EBCB;                /* defined variable */
+  --varOkBorder: #A9B85A;            /* defined variable outline */
+  --varMissingBg: #F7DED5;           /* undefined variable */
+  --varMissingLine: var(--red);      /* undefined variable underline */
+
+  /* Syntax (JSON, XML, HTML) */
+  --synKey: #1F6FA8;                 /* keys */
+  --synString: #1A736C;              /* strings */
+  --synNumber: #B02D6F;              /* numbers */
+  --synLiteral: #B5400F;             /* true, false, null */
+  --synPunct: var(--base00);         /* brackets and commas */
+  --synTag: #1F6FA8;                 /* XML/HTML tags */
+  --synAttr: #8A6700;                /* attributes */
+  --synComment: var(--base1);        /* comments */
+
+  /* HTTP methods */
+  --method-GET: #5F7100;             /* GET */
+  --method-POST: #A3440F;            /* POST */
+  --method-PUT: #1F6FA8;             /* PUT */
+  --method-PATCH: #5B5FB0;           /* PATCH */
+  --method-DELETE: #BF2B26;          /* DELETE */
+  --method-HEAD: var(--base01);      /* HEAD and OPTIONS */
+}

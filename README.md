@@ -333,7 +333,7 @@ Checked against Nielsen's ten heuristics and WCAG 2.1 AA:
 ## Look and feel notes
 
 **Appearance.** Five choices in View › Appearance, Settings › General, or by right-clicking the sun/moon
-button: *Match System*, *Light*, *Dark*, *Solarized Sepia* and *Solarized Dark*. The two Solarized themes use
+button: *Match System*, *Light*, *Dark*, *Solarized Sepia*, *Solarized Dark*, and any theme files of your own (below). The two Solarized themes use
 Ethan Schoonover's Solarized colours, nudged where needed so every text colour still meets WCAG AA (checked
 for all four palettes by `ContrastTest`, including syntax and method colours). The sun/moon button and ⇧⌘L /
 Ctrl+Shift+L flip within a family: Light ↔ Dark, Solarized Sepia ↔ Solarized Dark. In Match System mode the app checks the OS setting every
@@ -348,6 +348,48 @@ place, and theme changes cross-fade. Settings › General › *Reduce motion* (o
 **Splash.** `java Build.java` draws `splash.png` (and a 2x version) with the app's own code and fonts and
 names it in the jar manifest, so `java -jar restclient.jar` shows it immediately, before any app code
 runs; a bar fills as the app loads and it closes when the window opens.
+
+**Custom themes.** Themes are plain `.css` files in `~/.restclient/themes/`. They appear in View › Appearance
+and Settings › General next to the built-in ones, and the app updates the moment you save a file. The quickest
+start is View › Appearance › *Export Current Theme…*, which writes every colour, grouped and commented, for you to
+edit. A theme only needs the colours it changes:
+
+```css
+/* ~/.restclient/themes/nord.css */
+@theme {
+  name: "Nord";
+  base: dark;               /* light, dark, or another theme's file name: unset colours come from it */
+  toggle: "nord-light";     /* optional: where the sun/moon button goes from here */
+}
+
+:root {
+  --polar: #2E3440;         /* your own variables are fine */
+  --panelBg: var(--polar);
+  --sidebarBg: #3B4252;
+  --text: #ECEFF4;
+  --accent: #5E81AC;
+  --link: #88C0D0;
+  --method-GET: #A3BE8C;
+  --hoverSubtle: rgba(236, 239, 244, 0.08);
+}
+```
+
+- **Colours:** `#RGB`, `#RGBA`, `#RRGGBB`, `#RRGGBBAA`, `rgb()`, `rgba()` and `var(--name)`. Comments are `/* … */`.
+- **Names:** the 59 colours are listed in an exported file and in
+  [`ThemeFile.java`](src/main/java/dev/restclient/ui/ThemeFile.java). The two Solarized themes ship as files
+  ([`src/main/resources/themes/`](src/main/resources/themes/)) and work as examples.
+- **Problems** never stop a theme from loading. Settings › General lists anything it couldn't read, likely
+  typos ("`--acent` … did you mean `--accent`?"), `var()` loops, and any text that falls below WCAG AA contrast.
+- **Scope:** colours only. It's CSS-*like*, not a CSS engine: there are no selectors, sizes or layout, and a
+  theme file can't run code or load anything.
+- **Treated as untrusted input:** everything is allow-listed, so anything outside these shapes is dropped with a warning.
+  - **Colour names:** only the app's own names are applied.
+  - **Values:** only the formats above. `url()`, `expression()`, `@import` and similar are never read.
+  - **Theme names:** letters, digits, spaces and `- _ . , ' ( ) & + ! #` only, up to 48 characters. Names are
+    shown as plain text, never as HTML.
+  - **`base`, `toggle` and file names:** lowercase letters, digits, `-` and `_` only, so they can't be paths.
+  - **Files:** only regular files are read, never symlinks. Each is limited to 64 KB, 400 declarations and
+    16 levels of `var()`.
 
 **Fonts.** Settings › General has *Interface font* and *Code font* pickers, each listing your installed
 fonts previewed in themselves; the code list only offers fonts whose letters are all the same width, and

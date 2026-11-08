@@ -40,7 +40,9 @@ public final class App {
             Theme.setZoom((float) repo.settings().zoom, false);
             Theme.setFonts(repo.settings().uiFontFamily, repo.settings().codeFontFamily, false);
             dev.restclient.ui.Motion.setReduced(repo.settings().reduceMotion);
-            Theme.apply(repo.settings().theme, false);
+            dev.restclient.ui.Themes.useDir(repo.paths().base().resolve("themes"));
+            dev.restclient.ui.Themes.reload();
+            Theme.apply(repo.settings().theme, repo.settings().customTheme, false);
             dev.restclient.ui.Shadow.Factory.install();
             Splash.progress(0.65);
             try {

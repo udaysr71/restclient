@@ -44,7 +44,12 @@ public final class Theme {
 
     /** Installs the app's look and feel for the given mode. Call before creating windows, and again to switch live. */
     public static void apply(Settings.ThemeMode mode, boolean live) {
-        Palette want = paletteFor(mode);
+        apply(mode, null, live);
+    }
+
+    /** As {@link #apply(Settings.ThemeMode, boolean)}; {@code custom} names the user theme for {@code CUSTOM}. */
+    public static void apply(Settings.ThemeMode mode, String custom, boolean live) {
+        Palette want = paletteFor(mode, custom);
         if (installed && want == palette) return;
         palette = want;
         try {
@@ -204,7 +209,16 @@ public final class Theme {
 
     /** The palette a theme setting resolves to right now ({@code SYSTEM} follows the OS's light/dark choice). */
     public static Palette paletteFor(Settings.ThemeMode mode) {
+        return paletteFor(mode, null);
+    }
+
+    /** With {@code CUSTOM}, the user theme {@code custom}; Light if that file is gone. */
+    public static Palette paletteFor(Settings.ThemeMode mode, String custom) {
         return switch (mode) {
+            case CUSTOM -> {
+                Palette p = Themes.find(custom);
+                yield p != null ? p : Palette.LIGHT;
+            }
             case DARK -> Palette.DARK;
             case LIGHT -> Palette.LIGHT;
             case SEPIA -> Palette.SEPIA;
@@ -340,65 +354,77 @@ public final class Theme {
     }
 
     /**
-     * The four colour schemes. Light and Dark are the app's own; the two Solarized ones are built on Ethan
-     * Schoonover's Solarized palette (base03..base3 plus its accents), each value tuned where needed so text keeps
-     * 4.5:1 and outlines 3:1 (see ContrastTest). A token missing here falls back to the Light or Dark value.
+     * A colour scheme. Light and Dark are the app's own values (in this file); every other palette is a theme
+     * file, either bundled (Solarized Sepia and Solarized Dark, in {@code /themes}) or the user's own in
+     * {@code ~/.restclient/themes}, laid over Light or Dark (see {@link ThemeFile} and {@link Themes}).
      */
-    public enum Palette {
-        LIGHT(false, "Light", 0xFFFFFF, 0x4059D6),
-        DARK(true, "Dark", 0x16171D, 0x5068DE),
-        SEPIA(false, "Solarized Sepia", 0xFDF6E3, 0x1F6FA8,
-                "accent", 0x1F6FA8, "accentHover", 0x1A6496, "accentPressed", 0x15557F, "focusRing", 0x591F6FA8,
-                "link", 0x1F6FA8, "text", 0x073642, "secondary", 0x52666D, "disabledText", 0x9AA3A0,
-                "iconColor", 0x586E75, "separator", 0xE2DBC5, "sidebarBg", 0xEEE8D5, "toolbarBg", 0xF3EDDA,
-                "panelBg", 0xFDF6E3, "editorBg", 0xFDF6E3, "codeBg", 0xFAF3DE, "selectionBg", 0xDCE7EC,
-                "textSelection", 0xC9DDE6, "subtleBg", 0xEAE3CE, "fieldBg", 0xFFFBEF, "fieldBorder", 0x84928F,
-                "buttonBg", 0xFFFBEF, "buttonHover", 0xF3ECD8, "buttonPressed", 0xE4DCC3, "segmentSelected", 0xFFFBEF,
-                "menuBg", 0xFFFBEF, "tooltipBg", 0xFAF3DE, "hoverSubtle", 0x1A657B83, "pressedSubtle", 0x2E657B83,
-                "findMatch", 0x66B58900,
-                "okBg", 0xE8EBC8, "okFg", 0x586800, "infoBg", 0xDCE9F2, "infoFg", 0x1C6596,
-                "warnBg", 0xF6E7C0, "warnFg", 0x735600, "warnIcon", 0xB58900, "warnBorder", 0xD9B860,
-                "errBg", 0xF7DED5, "errFg", 0xA62820,
-                "varOkBg", 0xE6EBCB, "varOkBorder", 0xA9B85A, "varMissingBg", 0xF7DED5, "varMissingLine", 0xDC322F,
-                "synKey", 0x1F6FA8, "synString", 0x1A736C, "synNumber", 0xB02D6F, "synLiteral", 0xB5400F,
-                "synPunct", 0x657B83, "synTag", 0x1F6FA8, "synAttr", 0x8A6700, "synComment", 0x93A1A1,
-                "method.GET", 0x5F7100, "method.POST", 0xA3440F, "method.PUT", 0x1F6FA8, "method.PATCH", 0x5B5FB0,
-                "method.DELETE", 0xBF2B26, "method.HEAD", 0x586E75),
-        SOLARIZED_DARK(true, "Solarized Dark", 0x002B36, 0x3079BD,
-                "accent", 0x3079BD, "accentHover", 0x2B6FAE, "accentPressed", 0x245F96, "focusRing", 0x663079BD,
-                "link", 0x6CB6F0, "text", 0xE4DFCB, "secondary", 0xA7B3B3, "disabledText", 0x5A7279,
-                "iconColor", 0x9AAAAA, "separator", 0x0F4352, "sidebarBg", 0x073642, "toolbarBg", 0x04313D,
-                "panelBg", 0x002B36, "editorBg", 0x002B36, "codeBg", 0x00252F, "selectionBg", 0x0F4A5A,
-                "textSelection", 0x1A5568, "subtleBg", 0x0A3C49, "fieldBg", 0x03303C, "fieldBorder", 0x6C8288,
-                "buttonBg", 0x0A3C49, "buttonHover", 0x104755, "buttonPressed", 0x165262, "segmentSelected", 0x165262,
-                "menuBg", 0x073642, "tooltipBg", 0x073642, "hoverSubtle", 0x16EEE8D5, "pressedSubtle", 0x26EEE8D5,
-                "findMatch", 0x55B58900,
-                "okBg", 0x0F3B2A, "okFg", 0xA8C23A, "infoBg", 0x0C3B57, "infoFg", 0x7DBFF2,
-                "warnBg", 0x3A3014, "warnFg", 0xE0B03A, "warnIcon", 0xE0B03A, "warnBorder", 0x7A5E14,
-                "errBg", 0x3A1E22, "errFg", 0xFF8A80,
-                "varOkBg", 0x0F3B2A, "varOkBorder", 0x4F7A2A, "varMissingBg", 0x3A1E22, "varMissingLine", 0xFF6E66,
-                "synKey", 0x6CB6F0, "synString", 0x3FC0B5, "synNumber", 0xE47CB0, "synLiteral", 0xF08A4B,
-                "synPunct", 0x93A1A1, "synTag", 0x6CB6F0, "synAttr", 0xD4AE3A, "synComment", 0x72898F,
-                "method.GET", 0xA8C23A, "method.POST", 0xF08A4B, "method.PUT", 0x5AA9E6, "method.PATCH", 0xA3A6E8,
-                "method.DELETE", 0xFF6E66, "method.HEAD", 0x93A1A1);
+    public static final class Palette {
+        public static final Palette LIGHT = new Palette("light", "Light", false, null, java.util.Map.of(), List.of(), null);
+        public static final Palette DARK = new Palette("dark", "Dark", true, null, java.util.Map.of(), List.of(), null);
+        public static final Palette SEPIA = Themes.bundled("solarized-sepia");
+        public static final Palette SOLARIZED_DARK = Themes.bundled("solarized-dark");
 
-        public final boolean dark;
+        /** "light", "dark", "solarized-sepia", or a user file's name without ".css". */
+        public final String id;
         public final String label;
-        /** For swatches in menus and settings: the page colour and the accent. */
-        public final Color swatchBg;
-        public final Color swatchAccent;
-        final java.util.Map<String, Integer> overrides = new java.util.HashMap<>();
+        public final boolean dark;
+        /** Where the light/dark toggle goes from here (a palette id), or null for the opposite of Light/Dark. */
+        public final String toggle;
+        /** Problems found reading the file, and contrast failures; empty for the built-in palettes. */
+        public final List<String> warnings;
+        /** The user's file, or null for built-in and bundled palettes. */
+        public final java.nio.file.Path file;
+        final java.util.Map<String, Integer> overrides;
 
-        Palette(boolean dark, String label, int bg, int accent, Object... pairs) {
-            this.dark = dark;
+        Palette(String id, String label, boolean dark, String toggle, java.util.Map<String, Integer> overrides,
+                List<String> warnings, java.nio.file.Path file) {
+            this.id = id;
             this.label = label;
-            this.swatchBg = new Color(bg);
-            this.swatchAccent = new Color(accent);
-            for (int i = 0; i < pairs.length; i += 2) {
-                int v = (Integer) pairs[i + 1];
-                // plain RGB values get full alpha; ARGB values (hoverSubtle, focusRing...) keep theirs
-                overrides.put((String) pairs[i], (v >>> 24) == 0 ? v | 0xFF000000 : v);
+            this.dark = dark;
+            this.toggle = toggle;
+            this.overrides = java.util.Map.copyOf(overrides);
+            this.warnings = List.copyOf(warnings);
+            this.file = file;
+        }
+
+        /** The four palettes that ship with the app. */
+        public static List<Palette> builtIns() {
+            return List.of(LIGHT, DARK, SEPIA, SOLARIZED_DARK);
+        }
+
+        /** For swatches: the page colour and the accent. */
+        public Color swatchBg() {
+            return new Color(overrides.getOrDefault("panelBg", dark ? 0xFF16171D : 0xFFFFFFFF), true);
+        }
+
+        public Color swatchAccent() {
+            return new Color(overrides.getOrDefault("accent", dark ? 0xFF5068DE : 0xFF4059D6), true);
+        }
+
+        /** The colour this palette gives a token: its own value, or its base's. */
+        public int argb(String token) {
+            Palette saved = palette;
+            palette = this;
+            try {
+                return colorOf(token).getRGB();
+            } finally {
+                palette = saved;
             }
+        }
+
+        @Override
+        public String toString() {
+            return label;
+        }
+    }
+
+    /** A colour by token name ("accent", "method.GET"…), for theme export and checks. */
+    public static Color colorOf(String token) {
+        if (token.startsWith("method.")) return methodColor(HttpMethod.valueOf(token.substring(7)));
+        try {
+            return (Color) Theme.class.getMethod(token).invoke(null);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalArgumentException("Unknown colour " + token, e);
         }
     }
 
