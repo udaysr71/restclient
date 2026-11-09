@@ -1,35 +1,73 @@
-# This workflow will build a Java project with Maven, and cache/restore any dependencies to improve the workflow execution time
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-java-with-maven
+# Builds and tests REST Client.
+#
+# The project has no dependencies, so there's no dependency graph to submit: GitHub's "Java with Maven" starter
+# adds an "Update dependency graph" step (advanced-security/maven-dependency-submission-action) that crashes on a
+# pom with no <dependencies> ("Cannot read properties of undefined (reading 'forEach')"). It's left out here.
+#
+# Supply chain: every action is pinned to a full commit SHA (the comment shows its tag), the workflow can only
+# read the repository, and the build itself downloads nothing: `java Build.java` uses only the JDK. The Maven
+# step is there to keep pom.xml working for IDEs; Maven downloads its own plugins from Maven Central.
 
-# This workflow uses actions that are not certified by GitHub.
-# They are provided by a third-party and are governed by
-# separate terms of service, privacy policy, and support
-# documentation.
-
-name: Java CI with Maven
+name: Build
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ main, master ]
   pull_request:
-    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
-
+    name: Build and unit tests
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v4
-    - name: Set up JDK 17
-      uses: actions/setup-java@v4
-      with:
-        java-version: '17'
-        distribution: 'temurin'
-        cache: maven
-    - name: Build with Maven
-      run: mvn -B package --file pom.xml
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
-    # Optional: Uploads the full dependency graph to GitHub to improve the quality of Dependabot alerts this repository can receive
-    - name: Update dependency graph
-      uses: advanced-security/maven-dependency-submission-action@571e99aab1055c2e71a1e2309b9691de18d6b7d6
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Build the jar and run the unit tests
+        run: java Build.java
+
+      - name: Check the samples/ files match the code
+        run: |
+          java Build.java samples
+          git diff --exit-code samples/
+
+      - name: Check pom.xml still compiles (for IDEs)
+        run: mvn -B -ntp -q compile
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: restclient-jar
+          path: build/restclient.jar
+          if-no-files-found: error
+
+  ui:
+    name: UI and end-to-end checks
+    runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install a virtual display
+        run: sudo apt-get update -q && sudo apt-get install -y -q xvfb
+
+      # The interaction check, then the feature check against local HTTP/HTTPS servers, a restart, and a first launch
+      - name: Run the UI checks
+        run: xvfb-run -a -s "-screen 0 1440x900x24" java Build.java uicheck
