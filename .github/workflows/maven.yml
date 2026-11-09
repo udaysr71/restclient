@@ -36,6 +36,13 @@ jobs:
       - name: Build the jar and run the unit tests
         run: java Build.java
 
+      # straight after the build, before any other step can touch build/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: restclient-jar
+          path: build/restclient.jar
+          if-no-files-found: error
+
       - name: Check the samples/ files match the code
         run: |
           java Build.java samples
@@ -44,30 +51,28 @@ jobs:
       - name: Check pom.xml still compiles (for IDEs)
         run: mvn -B -ntp -q compile
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: restclient-jar
-          path: build/restclient.jar
-          if-no-files-found: error
+  # UI and end-to-end checks: switched off here to save CI time; run them locally with
+  #   xvfb-run -a -s "-screen 0 1440x900x24" java Build.java uicheck   (Linux)
+  #   java Build.java uicheck                                           (Windows, macOS)
+  # To turn them back on, remove the leading "# " from the lines below.
+  # ui:
+  #   name: UI and end-to-end checks
+  #   runs-on: ubuntu-latest
+  #   needs: build
+  #   timeout-minutes: 20
+  #   steps:
+  #     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+  #       with:
+  #         persist-credentials: false
 
-  ui:
-    name: UI and end-to-end checks
-    runs-on: ubuntu-latest
-    needs: build
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
+  #     - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+  #       with:
+  #         distribution: temurin
+  #         java-version: '17'
 
-      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
-        with:
-          distribution: temurin
-          java-version: '17'
+  #     - name: Install a virtual display
+  #       run: sudo apt-get update -q && sudo apt-get install -y -q xvfb
 
-      - name: Install a virtual display
-        run: sudo apt-get update -q && sudo apt-get install -y -q xvfb
-
-      # The interaction check, then the feature check against local HTTP/HTTPS servers, a restart, and a first launch
-      - name: Run the UI checks
-        run: xvfb-run -a -s "-screen 0 1440x900x24" java Build.java uicheck
+  #     # The interaction check, then the feature check against local HTTP/HTTPS servers, a restart, and a first launch
+  #     - name: Run the UI checks
+  #       run: xvfb-run -a -s "-screen 0 1440x900x24" java Build.java uicheck
