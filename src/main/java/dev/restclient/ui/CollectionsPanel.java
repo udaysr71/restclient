@@ -179,7 +179,10 @@ public class CollectionsPanel extends JPanel {
         JButton newBtn = Ui.button("New", Icons.get("plus", 13), null);
         newBtn.addActionListener(e -> Ui.showBelow(newMenu(), newBtn));
         footer.add(newBtn);
-        footer.add(Ui.button("Import cURL", Icons.get("import", 13), e -> frame.showCurlImport(null)));
+        JButton importBtn = Ui.button("Import", Icons.get("import", 13), null);
+        importBtn.setToolTipText("Import a cURL command or a Postman file");
+        importBtn.addActionListener(e -> Ui.showBelow(importMenu(), importBtn));
+        footer.add(importBtn);
         add(footer, BorderLayout.SOUTH);
         rebuild();
     }
@@ -217,6 +220,18 @@ public class CollectionsPanel extends JPanel {
         box.add(b);
         p.add(box);
         return p;
+    }
+
+    private JPopupMenu importMenu() {
+        JPopupMenu m = new JPopupMenu();
+        JMenuItem curl = new JMenuItem("cURL Command…");
+        curl.setAccelerator(Keys.IMPORT_CURL);
+        curl.addActionListener(e -> frame.showCurlImport(null));
+        m.add(curl);
+        item(m, "Postman Collection or Environment…", frame::importPostman);
+        m.addSeparator();
+        item(m, "Sample Collection", frame::addSampleCollection);
+        return m;
     }
 
     private JPopupMenu newMenu() {

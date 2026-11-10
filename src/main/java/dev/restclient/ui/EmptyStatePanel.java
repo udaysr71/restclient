@@ -43,6 +43,12 @@ public class EmptyStatePanel extends JPanel {
         cards.setMaximumSize(new Dimension(640, 120));
         cards.setAlignmentX(0.5f);
         col.add(cards);
+        col.add(Ui.vgap(14));
+        JPanel more = Ui.transparent(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 18, 0));
+        more.add(Ui.linkButton("Import from Postman…", e -> frame.importPostman()));
+        more.add(Ui.linkButton("Add the Sample Collection", e -> frame.addSampleCollection()));
+        more.setAlignmentX(0.5f);
+        col.add(more);
         col.add(Ui.vgap(24));
 
         JPanel tip = Ui.transparent(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 8, 0));

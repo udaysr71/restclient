@@ -689,6 +689,8 @@ public final class FeatureCheck {
         url(t, "{{baseUrl}}/echo/pretty");
         send(t);
         check("JSON is pretty-printed", () -> bodyText(t).contains("\n  \"method\""));
+        check("An unnamed tab shows its path instead of “Untitled request”", () -> t.displayTitle().equals("/echo/pretty")
+                && anyLabel(tabStrip(), x -> x.equals("/echo/pretty")));
         Ui.Segmented views = field(response(t), "views");
         segment(views, 1);
         check("Raw shows the body exactly as received", () -> bodyText(t).startsWith("{\"method\":\"GET\""));
@@ -765,6 +767,37 @@ public final class FeatureCheck {
 
         edt(() -> invoke(response(t), "copyBody"));
         check("Copy puts the shown body on the clipboard", () -> clipboard().contains("\"method\""));
+
+        // the Request view: what was actually sent
+        RequestTab sent = newTab();
+        method(sent, HttpMethod.POST);
+        url(sent, "{{baseUrl}}/echo/sent/{{userId}}");
+        KeyValueTable sentHeaders = field(sent, "headersTable");
+        edt(() -> sentHeaders.setRows(List.of(kv("X-Trace", "{{userId}}", true), kv("X-Off", "1", false))));
+        segment(field(sent, "bodyType"), BodyType.JSON.ordinal());
+        edt(() -> ((CodeArea) field(sent, "bodyEditor")).setText("{\"t\": \"{{token}}\"}"));
+        JComboBox<?> sentAuth = field(sent, "authType");
+        edt(() -> sentAuth.setSelectedIndex(2));
+        edt(() -> ((JTextComponent) field(sent, "authToken")).setText("{{token}}"));
+        send(sent);
+        Ui.Segmented sentViews = field(response(sent), "views");
+        segment(sentViews, 3);
+        String req = bodyText(sent);
+        verify("Request view shows the method and the URL with variables filled in", req.startsWith("POST " + http + "/echo/sent/42\n"), req);
+        verify("...the headers that were sent, and not the disabled one", req.contains("X-Trace: 42") && !req.contains("X-Off")
+                && req.contains("Content-Type: application/json") && req.contains("Authorization: Bearer "), req);
+        verify("...the body", req.contains("{\"t\": \""), req);
+        verify("...with secret values hidden", !req.contains("secret-abc-123"), req);
+        verify("(the server did get the real secret)", "Bearer secret-abc-123".equals(lastSeen().header("Authorization")), lastSeen().header("Authorization"));
+        javax.swing.JButton sentCopy = field(response(sent), "copyButton");
+        check("Copy says it copies the request", () -> "Copy the request as sent".equals(sentCopy.getToolTipText()));
+        edt(sentCopy::doClick);
+        check("...and does", () -> clipboard().startsWith("POST " + http + "/echo/sent/42"));
+        segment(sentViews, 0);
+        check("Back on Pretty, the response is shown again with its highlighting", () -> bodyText(sent).contains("\"method\": \"POST\""));
+        edt(() -> {
+            for (int i = 0; i < tabStrip().getTabCount(); i++) if (tabStrip().getComponentAt(i) == t) tabStrip().setSelectedIndex(i);
+        });
 
         url(t, "{{baseUrl}}/xml");
         send(t);
@@ -955,7 +988,11 @@ public final class FeatureCheck {
         Seen original = lastSeen();
         later(() -> frame.showCurlImport(cmd));
         check("Import cURL opens with the command", () -> anyDialog());
-        press("Import");
+        // the dialog's own Import button (the sidebar has an Import button too)
+        javax.swing.AbstractButton dialogImport = call(() -> find(topDialog().getContentPane(), javax.swing.AbstractButton.class,
+                x -> x.isShowing() && "Import".equals(x.getText())));
+        edt(dialogImport::doClick);
+        robot.delay(250);
         RequestTab imported = currentTab();
         check("Importing opens it in a tab", () -> imported != t && imported.method() == HttpMethod.POST);
         send(imported);
@@ -1205,6 +1242,14 @@ public final class FeatureCheck {
         JList<?> list = field(hp, "list");
         check("History lists entries grouped by day", () -> list.getModel().getSize() > 3
                 && list.getModel().getElementAt(0) instanceof String day && (day.equals("Today") || !day.isEmpty()));
+        check("History rows say which host", () -> {
+            int row = -1;
+            for (int i = 0; i < list.getModel().getSize(); i++) if (list.getModel().getElementAt(i) instanceof HistoryEntry) { row = i; break; }
+            @SuppressWarnings({"unchecked", "rawtypes"})
+            java.awt.Component c = ((javax.swing.ListCellRenderer) list.getCellRenderer()).getListCellRendererComponent(list, list.getModel().getElementAt(row), row, false, false);
+            String host = HistoryPanel.host(((HistoryEntry) list.getModel().getElementAt(row)).sentUrl);
+            return !host.isEmpty() && anyLabelAnywhere((java.awt.Container) c, x -> x.startsWith(host + " · "));
+        });
         HistoryEntry first = history().get(0);
         edt(() -> frame.showHistoryEntry(first));
         check("Opening an entry shows it read-only", () -> tabStrip().getSelectedComponent() instanceof HistoryTab ht
@@ -1434,6 +1479,24 @@ public final class FeatureCheck {
         }
         check("Close All Tabs leaves the empty state", () -> tabStrip().getTabCount() == 0
                 && anyLabel(frame.getContentPane(), s -> s.toLowerCase().contains("new request")));
+        check("The empty state offers Import from Postman and the sample collection", () -> visibleButton("Import from Postman…") != null
+                && visibleButton("Add the Sample Collection") != null);
+        javax.swing.AbstractButton importBtn = visibleButton("Import");
+        check("The sidebar has one Import button", () -> importBtn != null && visibleButton("Import cURL") == null);
+        if (importBtn != null) {
+            click(importBtn);
+            check("...whose menu offers cURL, Postman and the sample", () -> visibleButton("cURL Command…") != null
+                    && visibleButton("Postman Collection or Environment…") != null && visibleButton("Sample Collection") != null);
+            FileChoosers.testPicker = (title, name) -> null;
+            String[] askedTitle = new String[1];
+            FileChoosers.testPicker = (title, name) -> {
+                askedTitle[0] = title;
+                return null;
+            };
+            press("Postman Collection or Environment…");
+            check("Choosing Postman opens the file picker", () -> "Import from Postman".equals(askedTitle[0]));
+            FileChoosers.testPicker = null;
+        }
         check("Save and Send are disabled with no tabs", () -> !action("save").isEnabled() && !action("send").isEnabled());
         refocus();
         key(MOD, KeyEvent.VK_T);
@@ -1791,6 +1854,73 @@ public final class FeatureCheck {
         edt(frame::importPostman);
         check("Cancelling the picker imports nothing", () -> collection("Shop API (5)") == null && !anyDialog());
         FileChoosers.testPicker = null;
+        // globals: a Postman globals file merges into Globals instead of becoming an environment
+        Path globalsIn = home.resolve("workspace.postman_globals.json");
+        try {
+            Files.writeString(globalsIn, """
+                    { "id": "g", "name": "My Workspace Globals", "_postman_variable_scope": "globals", "values": [
+                      { "key": "baseUrl", "value": "http://changed.invalid", "enabled": true },
+                      { "key": "fromPostman", "value": "yes", "enabled": true },
+                      { "key": "pmSecret", "value": "shh", "type": "secret", "enabled": true } ] }
+                    """);
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException(e);
+        }
+        int envsBefore = call(() -> ctx().repo.environments().size());
+        later(() -> frame.importPostman(globalsIn));
+        check("A value that differs from yours asks before replacing it", () -> visibleButton("Keep Mine") != null
+                && visibleButton("Replace With File’s") != null && dialogShowing(d -> anyLabel(d, x -> x.contains("baseUrl"))));
+        press("Keep Mine");
+        check("Keep Mine adds the new variables and leaves yours alone", () -> globalValue("fromPostman").equals("yes")
+                && globalValue("baseUrl").equals(http) && ctx().repo.globals().variables.stream().anyMatch(v -> v.key.equals("pmSecret") && v.secret));
+        check("...and no environment is created for it", () -> ctx().repo.environments().size() == envsBefore);
+        check("...saved to disk", () -> {
+            ctx().repo.flush();
+            try (var files = Files.walk(home)) {
+                return files.filter(Files::isRegularFile).filter(p -> !p.equals(globalsIn)).anyMatch(p -> readFile(p).contains("fromPostman"));
+            }
+        });
+        press("Undo");
+        check("Undo puts Globals back as it was", () -> globalValue("fromPostman").isEmpty() && globalValue("baseUrl").equals(http));
+        later(() -> frame.importPostman(globalsIn));
+        press("Replace With File’s");
+        check("Replace With File’s takes the file's value", () -> globalValue("baseUrl").equals("http://changed.invalid")
+                && globalValue("fromPostman").equals("yes"));
+        press("Undo");
+        check("...and Undo restores yours", () -> globalValue("baseUrl").equals(http));
+        later(() -> frame.importPostman(globalsIn));
+        press("Cancel");
+        check("Cancel changes nothing", () -> globalValue("fromPostman").isEmpty());
+
+        // export Globals from the Environments dialog
+        edt(() -> {
+            Variable sec = new Variable("globalSecret", "g-secret-value");
+            sec.secret = true;
+            ctx().repo.globals().variables.add(sec);
+            ctx().repo.saveEnvironment(ctx().repo.globals());
+        });
+        Path globalsOut = home.resolve("globals.postman_globals.json");
+        String[] askedG = new String[1];
+        FileChoosers.testPicker = (title, name) -> {
+            askedG[0] = name;
+            return globalsOut.toFile();
+        };
+        later(() -> frame.showEnvironments(Environment.GLOBALS_ID, null, false));
+        check("Globals in the Environments dialog has Export to Postman…", () -> visibleButton("Export to Postman…") != null);
+        pressLater("Export to Postman…");
+        check("...which asks about secrets", () -> visibleButton("Leave Secrets Empty") != null);
+        pressLater("Leave Secrets Empty");
+        check("...and writes a Postman globals file without secret values", () -> Files.exists(globalsOut)
+                && readFile(globalsOut).contains("\"_postman_variable_scope\": \"globals\"") && readFile(globalsOut).contains("baseUrl")
+                && !readFile(globalsOut).contains("g-secret-value") && "globals.postman_globals.json".equals(askedG[0]), 4000);
+        closeDialogs();
+        FileChoosers.testPicker = null;
+        later(() -> frame.importPostman(globalsOut));
+        check("Importing your own Globals export changes nothing and says so", () -> !anyDialog()
+                && anyLabel(frame.getContentPane(), x -> x.contains("already has everything")), 3000);
+        check("...and a secret left empty in the file doesn't wipe yours", () -> globalValue("globalSecret").equals("g-secret-value"));
+        closeDialogs();
+
         Path junk = home.resolve("not-postman.json");
         try {
             Files.writeString(junk, "{\"hello\": \"world\"}");
@@ -1804,6 +1934,19 @@ public final class FeatureCheck {
     }
 
     // ------------------------------------------------------------------ 18. the sample collection
+
+    /** Like anyLabel, for components that aren't on screen (renderers). */
+    private static boolean anyLabelAnywhere(java.awt.Container root, java.util.function.Predicate<String> p) {
+        for (java.awt.Component c : root.getComponents()) {
+            if (c instanceof javax.swing.JLabel l && l.getText() != null && p.test(l.getText())) return true;
+            if (c instanceof java.awt.Container k && anyLabelAnywhere(k, p)) return true;
+        }
+        return false;
+    }
+
+    private static String globalValue(String key) {
+        return ctx().repo.globals().variables.stream().filter(v -> v.key.equals(key)).map(v -> v.value).findFirst().orElse("");
+    }
 
     private static CollectionNode node(List<CollectionNode> nodes, String name) {
         for (CollectionNode n : nodes) {

@@ -35,7 +35,8 @@ test kit — is in this repository, and the build needs nothing but a JDK. See [
   - undefined variables are underlined in red, with a one-click "Define…"
   - autocomplete after typing `{{`
 - Recent history, grouped by day, with read-only snapshots (secrets masked)
-- Responses: Pretty, Raw and Headers views, find, copy and save. In Headers, ⌘C / Ctrl+C copies the selected
+- Responses: Pretty, Raw, Headers and Request views, find, copy and save. *Request* shows what was actually
+  sent: the URL and headers with variables filled in (secret values hidden) and the body. In Headers, ⌘C / Ctrl+C copies the selected
   rows as `Name: Value` lines, right-click offers Copy Value / Name / Row / All Headers, and the Copy button
   copies them all. Drag the column divider to resize; double-click it to fit the names.
 - cURL import (paste into any URL field, or the import dialog) and export
@@ -223,6 +224,21 @@ second import of the same file becomes "Shop API (2)".
 | "SSL certificate verification" off | Skip verification for that request |
 | `{{variables}}` | Unchanged; the syntax is the same |
 
+**Variables.** Postman keeps each kind of variable in its own file, and so does the import:
+
+| Postman file | Holds | Imports as |
+|---|---|---|
+| `*.postman_collection.json` | Collection variables only | The collection's variables |
+| `*.postman_environment.json` | One environment | A new environment (status bar: *Use It*) |
+| `*.postman_globals.json` | Globals | Merged into Globals |
+
+A collection export never includes environments or globals, so export those from Postman as well. Postman
+writes only each variable's *initial value*; a value typed only into *current value* arrives empty.
+
+A globals file is merged: new variables are added, and if some already exist with a different value you
+choose *Keep Mine* or *Replace With File's*. A secret left empty in the file never replaces yours. *Undo*
+in the status bar puts Globals back as it was.
+
 What can't come across is listed after the import (the status bar's *Details*): pre-request and test
 scripts, form-data file uploads and binary bodies, saved example responses, and other auth types
 (OAuth, Digest, AWS…). Multipart text fields are kept as a URL-encoded form. Postman's dynamic
@@ -230,7 +246,8 @@ variables (`{{$guid}}`) are sent as written.
 
 **Export:** File › *Export Collection to Postman…*, or right-click a collection › *Export to Postman…*,
 writes a Collection v2.1 file that Postman imports directly. URLs are written in Postman's parts form, so
-Params show up there. Environments export from the Environments dialog (⋯ › *Export to Postman…*). If an
+Params show up there. Environments export from the Environments dialog (⋯ › *Export to Postman…*), and
+Globals from its *Export to Postman…* button there. If an
 environment has secrets, you're asked whether to include their values; by default they're left empty.
 
 Imported files are treated as untrusted. They're read by the app's own JSON parser (nesting is limited)
@@ -301,7 +318,7 @@ Build.java              JDK-only build script
 ## Tests
 
 ```bash
-java Build.java test           # 108 unit tests
+java Build.java test           # 110 unit tests
 java Build.java uicheck        # needs a display; on Linux CI: xvfb-run java Build.java uicheck
 java Build.java featurecheck   # just the end-to-end feature check
 ```

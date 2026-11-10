@@ -338,6 +338,39 @@ class PostmanTest {
     }
 
     @Test
+    void globalsFilesAreRecognisedAndWrittenWithTheirScope() throws Exception {
+        String file = """
+                { "id": "g", "values": [ { "key": "apiHost", "value": "https://api", "enabled": true },
+                                         { "key": "key", "value": "k", "type": "secret", "enabled": false } ],
+                  "name": "My Workspace Globals", "_postman_variable_scope": "globals" }
+                """;
+        Postman.Result r = Postman.read(file);
+        assertTrue(r.isGlobals() && !r.isCollection(), "recognised as globals");
+        assertEquals(2, r.environment().variables.size());
+        assertTrue(r.environment().variables.get(1).secret && !r.environment().variables.get(1).enabled);
+        // older exports have no name
+        assertTrue(Postman.read("{\"values\": [], \"_postman_variable_scope\": \"globals\"}").isGlobals());
+        // an environment file is not globals
+        assertFalse(Postman.read("{\"name\": \"E\", \"values\": [], \"_postman_variable_scope\": \"environment\"}").isGlobals());
+
+        Environment g = new Environment();
+        g.name = "whatever";
+        g.variables.add(new Variable("host", "h"));
+        Variable s = new Variable("token", "top-secret");
+        s.secret = true;
+        g.variables.add(s);
+        String out = Postman.writeGlobals(g, false);
+        Map<?, ?> root = (Map<?, ?>) Json.parse(out);
+        assertEquals("globals", root.get("_postman_variable_scope"));
+        assertEquals("Globals", root.get("name"));
+        assertFalse(out.contains("top-secret"), "secrets left out unless asked");
+        Postman.Result back = Postman.read(Postman.writeGlobals(g, true));
+        assertTrue(back.isGlobals());
+        assertEquals("top-secret", back.environment().variables.get(1).value);
+        assertEquals("globals.postman_globals.json", Postman.fileName("globals", "globals"));
+    }
+
+    @Test
     void fileNames() {
         assertEquals("shop-api.postman_collection.json", Postman.fileName("Shop API!", "collection"));
         assertEquals("export.postman_environment.json", Postman.fileName("✓✓", "environment"));

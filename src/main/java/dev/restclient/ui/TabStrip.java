@@ -62,6 +62,31 @@ public class TabStrip extends JPanel {
                 g.setColor(Theme.separator());
                 g.fillRect(0, getHeight() - 1, getWidth(), 1);
             }
+
+            /** Where tabs run off either side, they fade out instead of being cut mid-letter. */
+            @Override
+            protected void paintChildren(Graphics g) {
+                super.paintChildren(g);
+                int hiddenLeft = hiddenLeft();
+                int hiddenRight = hiddenRight();
+                if (hiddenLeft <= 0 && hiddenRight <= 0) return;
+                java.awt.Rectangle r = rowScroll.getBounds();
+                java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+                java.awt.Color solid = Theme.toolbarBg();
+                java.awt.Color clear = new java.awt.Color(solid.getRed(), solid.getGreen(), solid.getBlue(), 0);
+                int w = Theme.scaled(FADE);
+                int h = r.height - 1; // leave the bottom hairline
+                if (hiddenLeft > 0) {
+                    g2.setPaint(new java.awt.GradientPaint(r.x, 0, solid, r.x + w, 0, clear));
+                    g2.fillRect(r.x, r.y, w, h);
+                }
+                if (hiddenRight > 0) {
+                    int x = r.x + r.width - w;
+                    g2.setPaint(new java.awt.GradientPaint(x, 0, clear, x + w, 0, solid));
+                    g2.fillRect(x, r.y, w, h);
+                }
+                g2.dispose();
+            }
         };
         header.setBorder(Ui.pad(5, 6, 0, 6));
         header.add(rowScroll, BorderLayout.CENTER);
@@ -70,7 +95,10 @@ public class TabStrip extends JPanel {
         overflow.setVisible(false);
         trailing.add(overflow, BorderLayout.EAST);
         header.add(trailing, BorderLayout.EAST);
-        rowScroll.getViewport().addChangeListener(e -> updateOverflow());
+        rowScroll.getViewport().addChangeListener(e -> {
+            updateOverflow();
+            header.repaint(); // the edge fades depend on the scroll position
+        });
         row.addComponentListener(new java.awt.event.ComponentAdapter() {
             @Override
             public void componentResized(java.awt.event.ComponentEvent e) {
@@ -89,6 +117,19 @@ public class TabStrip extends JPanel {
     }
 
     private final javax.swing.JButton overflow = Ui.toolbarButton(Icons.get("chevron-down", 14), "Show all tabs", e -> showAllTabs());
+
+    /** Width of the fade at a clipped edge of the tab row. */
+    private static final int FADE = 28;
+
+    /** How many pixels of tabs are scrolled out of view on the left / right. */
+    int hiddenLeft() {
+        return rowScroll.getViewport().getViewPosition().x;
+    }
+
+    int hiddenRight() {
+        javax.swing.JViewport v = rowScroll.getViewport();
+        return Math.max(0, row.getWidth() - v.getViewPosition().x - v.getWidth());
+    }
 
     private void updateOverflow() {
         boolean over = row.getPreferredSize().width > rowScroll.getViewport().getWidth() + 1;
@@ -195,7 +236,12 @@ public class TabStrip extends JPanel {
         Tab t = tabs.get(i);
         cards.show(content, t.key);
         for (Tab x : tabs) x.head.repaint();
-        SwingUtilities.invokeLater(() -> row.scrollRectToVisible(t.head.getBounds()));
+        SwingUtilities.invokeLater(() -> {
+            // with room either side, so the selected tab never sits under an edge fade
+            java.awt.Rectangle b = t.head.getBounds();
+            int pad = Theme.scaled(FADE);
+            row.scrollRectToVisible(new java.awt.Rectangle(Math.max(0, b.x - pad), b.y, b.width + 2 * pad, b.height));
+        });
         if (changed) fire();
     }
 

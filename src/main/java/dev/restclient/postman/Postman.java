@@ -44,9 +44,15 @@ public final class Postman {
     private static final int MAX_NAME = 200;
 
     /** What an import produced, plus anything that couldn't be brought across. */
-    public record Result(ApiCollection collection, Environment environment, int requests, int folders, List<String> notes) {
+    public record Result(ApiCollection collection, Environment environment, boolean globals, int requests, int folders,
+                         List<String> notes) {
         public boolean isCollection() {
             return collection != null;
+        }
+
+        /** A Postman globals file: {@link #environment} holds its variables, to merge into the app's Globals. */
+        public boolean isGlobals() {
+            return globals;
         }
     }
 
@@ -72,7 +78,9 @@ public final class Postman {
         }
         if (!(root instanceof Map<?, ?> m)) throw new ImportException("This isn't a Postman file (expected a JSON object).");
         if (m.get("info") instanceof Map<?, ?> && m.get("item") instanceof List<?>) return readCollection(m);
-        if (m.get("values") instanceof List<?> && m.containsKey("name")) return readEnvironment(m);
+        // a globals file is an environment file marked with this scope (older ones have no name)
+        boolean globals = "globals".equals(str(m.get("_postman_variable_scope")));
+        if (m.get("values") instanceof List<?> && (globals || m.containsKey("name"))) return readEnvironment(m, globals);
         if (m.containsKey("requests") && m.containsKey("order")) {
             throw new ImportException("This is a Postman v1 collection. Open it in Postman and export it as Collection v2.1, then import that.");
         }
@@ -125,7 +133,7 @@ public final class Postman {
         Auth collectionAuth = auth(m.get("auth"), r, null);
         if (list(m.get("event")).size() > 0) r.scripts += countScripts(m.get("event"));
         c.items.addAll(items(list(m.get("item")), collectionAuth, r));
-        return new Result(c, null, r.requests, r.folders, r.finish());
+        return new Result(c, null, false, r.requests, r.folders, r.finish());
     }
 
     private static List<CollectionNode> items(List<?> items, Auth inherited, Reader r) {
@@ -406,7 +414,7 @@ public final class Postman {
         return n;
     }
 
-    private static Result readEnvironment(Map<?, ?> m) {
+    private static Result readEnvironment(Map<?, ?> m, boolean globals) {
         Environment e = new Environment();
         e.name = cleanName(str(m.get("name")), "Imported environment");
         for (Object o : list(m.get("values"))) {
@@ -416,7 +424,7 @@ public final class Postman {
             var.secret = "secret".equals(str(v.get("type")));
             e.variables.add(var);
         }
-        return new Result(null, e, 0, 0, List.of());
+        return new Result(null, e, globals, 0, 0, List.of());
     }
 
     // ================================================================== writing
@@ -587,9 +595,18 @@ public final class Postman {
 
     /** The environment as a Postman environment file. Secret values are left empty unless {@code includeSecrets}. */
     public static String writeEnvironment(Environment e, boolean includeSecrets) {
+        return writeVariables(e, e.name, "environment", includeSecrets);
+    }
+
+    /** The app's Globals as a Postman globals file, which Postman imports into its own Globals. */
+    public static String writeGlobals(Environment globals, boolean includeSecrets) {
+        return writeVariables(globals, "Globals", "globals", includeSecrets);
+    }
+
+    private static String writeVariables(Environment e, String name, String scope, boolean includeSecrets) {
         Map<String, Object> root = new LinkedHashMap<>();
-        root.put("id", e.id);
-        root.put("name", e.name);
+        root.put("id", "globals".equals(scope) ? UUID.nameUUIDFromBytes("restclient-globals".getBytes()).toString() : e.id);
+        root.put("name", name);
         List<Object> values = new ArrayList<>();
         for (Variable v : e.variables) {
             Map<String, Object> m = new LinkedHashMap<>();
@@ -600,7 +617,7 @@ public final class Postman {
             values.add(m);
         }
         root.put("values", values);
-        root.put("_postman_variable_scope", "environment");
+        root.put("_postman_variable_scope", scope);
         return Json.write(root, true);
     }
 

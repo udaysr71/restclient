@@ -287,6 +287,8 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
             method.setFont(Theme.mono(11f).deriveFont(Font.BOLD));
             add(method);
             add(Ui.hgap(6));
+            // an unnamed tab shows its URL path, which is the user's text: never rendered as HTML
+            title.putClientProperty("html.disable", Boolean.TRUE);
             add(title);
             add(Ui.hgap(6));
             add(dot);
@@ -342,7 +344,7 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
         if (c instanceof RequestTab t) {
             ApiCollection col = ctx.repo.collection(t.collectionId());
             text = col != null && t.nodeId() != null ? col.pathTo(t.nodeId()).replace(" › ", "  /  ") : "Not saved to a collection";
-            setTitle(t.title() + " — REST Client");
+            setTitle(t.displayTitle() + " — REST Client");
         } else if (c instanceof HistoryTab) {
             text = "History";
             setTitle("History — REST Client");
@@ -492,9 +494,9 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
     public void tabStateChanged(RequestTab t) {
         int i = tabs.indexOfComponent(t);
         if (i < 0) return;
-        if (tabs.getTabComponentAt(i) instanceof TabHeader h) h.update(t.method(), t.title(), t.isDirty(), false);
+        if (tabs.getTabComponentAt(i) instanceof TabHeader h) h.update(t.method(), t.displayTitle(), t.isDirty(), false);
         updateActionStates();
-        tabs.setToolTipTextAt(i, t.title() + (t.isDirty() ? " — unsaved changes" : ""));
+        tabs.setToolTipTextAt(i, t.displayTitle() + (t.isDirty() ? " — unsaved changes" : ""));
         if (tabs.getSelectedIndex() == i) updateBreadcrumb();
     }
 
@@ -921,6 +923,8 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
                 status(what + " · " + r.notes().size() + (r.notes().size() == 1 ? " thing" : " things") + " to know",
                         "Details", () -> importNotes(c.name, r.notes()));
             }
+        } else if (r.isGlobals()) {
+            importGlobals(r.environment().variables);
         } else {
             Environment e = r.environment();
             e.name = uniqueName(e.name, ctx.repo.environments().stream().map(x -> x.name).toList());
@@ -929,6 +933,78 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
             status("Imported environment “" + e.name + "” (" + e.variables.size() + (e.variables.size() == 1 ? " variable)" : " variables)"),
                     "Use It", () -> switchEnvironment(e));
         }
+    }
+
+    /**
+     * Merges a Postman globals file into Globals: new variables are added; for ones that already exist with a
+     * different value, the user chooses whether the file's values replace theirs. Undo restores Globals as it was.
+     */
+    private void importGlobals(List<Variable> incoming) {
+        Environment g = ctx.repo.globals();
+        List<Variable> before = new java.util.ArrayList<>();
+        for (Variable v : g.variables) before.add(copy(v));
+        java.util.Map<String, Variable> mine = new java.util.LinkedHashMap<>();
+        for (Variable v : g.variables) mine.putIfAbsent(v.key, v);
+        List<Variable> added = new java.util.ArrayList<>();
+        List<Variable> conflicts = new java.util.ArrayList<>();
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (Variable v : incoming) {
+            if (!seen.add(v.key)) continue; // a key repeated in the file: the first one counts
+            Variable have = mine.get(v.key);
+            if (have == null) added.add(v);
+            // an empty secret in the file means "left out of the export", not "set it to nothing": never a conflict
+            else if (v.secret && v.value.isEmpty()) continue;
+            else if (!have.value.equals(v.value) || have.secret != v.secret || have.enabled != v.enabled) conflicts.add(v);
+        }
+        if (added.isEmpty() && conflicts.isEmpty()) {
+            status(incoming.isEmpty() ? "That globals file has no variables." : "Globals already has everything in that file.", null, null);
+            return;
+        }
+        boolean replace = false;
+        if (!conflicts.isEmpty()) {
+            StringBuilder names = new StringBuilder();
+            for (int i = 0; i < conflicts.size() && i < 6; i++) names.append(i == 0 ? "" : ", ").append(Ui.escape(conflicts.get(i).key));
+            if (conflicts.size() > 6) names.append(" and ").append(conflicts.size() - 6).append(" more");
+            String n = conflicts.size() == 1 ? "1 variable is" : conflicts.size() + " variables are";
+            Object[] options = {"Keep Mine", "Replace With File’s", "Cancel"};
+            int choice = Ui.option(this, "<html><div style='width:380px'>" + n + " already in Globals with a different value:<br><b>"
+                    + names + "</b><br><br>Keep your values, or replace them with the file’s?"
+                    + (added.isEmpty() ? "" : " The " + added.size() + " new " + (added.size() == 1 ? "variable is" : "variables are") + " added either way.")
+                    + "</div></html>", "Import Globals", javax.swing.JOptionPane.QUESTION_MESSAGE, options, options[0]);
+            if (choice < 0 || choice == 2) return;
+            replace = choice == 1;
+        }
+        if (replace) {
+            for (Variable v : conflicts) {
+                Variable have = mine.get(v.key);
+                have.value = v.value;
+                have.secret = v.secret;
+                have.enabled = v.enabled;
+            }
+        }
+        for (Variable v : added) g.variables.add(copy(v));
+        if (added.isEmpty() && !replace) {
+            status("Nothing imported: Globals kept your values.", null, null);
+            return;
+        }
+        ctx.repo.saveEnvironment(g);
+        variablesChanged();
+        int replaced = replace ? conflicts.size() : 0;
+        String what = "Imported into Globals: " + added.size() + " added"
+                + (conflicts.isEmpty() ? "" : replace ? ", " + replaced + " replaced" : ", " + conflicts.size() + " kept as they were");
+        status(what, "Undo", () -> {
+            g.variables.clear();
+            g.variables.addAll(before);
+            ctx.repo.saveEnvironment(g);
+            variablesChanged();
+        });
+    }
+
+    private static Variable copy(Variable v) {
+        Variable c = new Variable(v.key, v.value);
+        c.secret = v.secret;
+        c.enabled = v.enabled;
+        return c;
     }
 
     private void importNotes(String name, List<String> notes) {
@@ -971,14 +1047,20 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
 
     /** Export an environment to a Postman environment file, asking whether secret values go in it. */
     public void exportEnvironment(Environment e, java.awt.Component parent) {
+        boolean globals = e == ctx.repo.globals();
         boolean include = false;
         if (e.variables.stream().anyMatch(v -> v.secret && !v.value.isEmpty())) {
             Object[] options = {"Leave Secrets Empty", "Include Secrets", "Cancel"};
-            int r = Ui.option(parent, "<html><div style='width:360px'>“" + Ui.escape(e.name) + "” has secret variables. "
+            int r = Ui.option(parent, "<html><div style='width:360px'>" + (globals ? "Globals" : "“" + Ui.escape(e.name) + "”") + " has secret variables. "
                     + "Include their values in the file?<br><br>Anyone with the file can read them.</div></html>",
                     "Export to Postman", javax.swing.JOptionPane.QUESTION_MESSAGE, options, options[0]);
             if (r < 0 || r == 2) return;
             include = r == 1;
+        }
+        if (globals) {
+            java.io.File f = FileChoosers.save(parent, "Export Globals to Postman", dev.restclient.postman.Postman.fileName("globals", "globals"));
+            if (f != null) writeExport(f, dev.restclient.postman.Postman.writeGlobals(e, include), "Exported Globals");
+            return;
         }
         java.io.File f = FileChoosers.save(parent, "Export “" + e.name + "” to Postman",
                 dev.restclient.postman.Postman.fileName(e.name, "environment"));

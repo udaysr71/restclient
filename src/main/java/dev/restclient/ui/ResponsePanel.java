@@ -75,7 +75,10 @@ public class ResponsePanel extends JPanel {
         }
     };
     private final JPanel tools = Ui.transparent(new FlowLayout(FlowLayout.RIGHT, 4, 0));
-    private final Ui.Segmented views = new Ui.Segmented("Pretty", "Raw", "Headers");
+    private final Ui.Segmented views = new Ui.Segmented("Pretty", "Raw", "Headers", "Request");
+    /** The request as it was sent (variables resolved, secrets hidden), for the Request view. */
+    private String sentText = "";
+    private CodeArea.Lang bodyLang = CodeArea.Lang.NONE;
     private final CodeArea body = new CodeArea();
     private final HeadersView headersView = new HeadersView();
     private javax.swing.JButton copyButton;
@@ -104,6 +107,7 @@ public class ResponsePanel extends JPanel {
 
         // header row
         JLabel title = Ui.heading("Response", 13f);
+        titleLabel = title;
         header.setBorder(BorderFactory.createCompoundBorder(Ui.line(0, 0, 1, 0), Ui.pad(8, 14, 8, 10)));
         JPanel left = Ui.transparent(null);
         left.setLayout(new javax.swing.BoxLayout(left, javax.swing.BoxLayout.X_AXIS));
@@ -245,14 +249,35 @@ public class ResponsePanel extends JPanel {
      * When the header is too narrow, drop trailing details (size, then time) rather than letting the last one
      * get cut off mid-word.
      */
+    private JLabel titleLabel;
+
     private void fitMeta() {
         java.awt.Container left = meta.getParent();
         if (left == null || header.getWidth() == 0) return;
         java.awt.Component[] parts = meta.getComponents();
         for (java.awt.Component c : parts) c.setVisible(true);
+        if (titleLabel != null) titleLabel.setVisible(true);
         int available = header.getWidth() - tools.getPreferredSize().width - header.getInsets().left - header.getInsets().right;
         for (int i = parts.length - 1; i > 0 && left.getPreferredSize().width > available; i--) parts[i].setVisible(false);
+        // still too narrow: the status matters more than the word "Response", so the title gives way before the
+        // status pill is cut off
+        if (titleLabel != null && parts.length > 0 && left.getPreferredSize().width > available) titleLabel.setVisible(false);
         meta.revalidate();
+    }
+
+    /**
+     * Records what was sent for the Request view: the request line, the headers the app set, and the body, with
+     * variables resolved and secret values hidden (as in History). Call before {@link #showResponse}.
+     */
+    public void setSent(String method, String url, List<KeyValue> headers, String body) {
+        StringBuilder b = new StringBuilder();
+        b.append(method).append(' ').append(url).append('\n');
+        if (!headers.isEmpty()) b.append('\n');
+        for (KeyValue kv : headers) b.append(kv.key).append(": ").append(kv.value).append('\n');
+        if (body != null && !body.isEmpty()) b.append('\n').append(body).append('\n');
+        b.append("\n# Variables are filled in; secret values are hidden.\n")
+                .append("# Java's HTTP client adds Host, Content-Length, User-Agent and connection headers itself.\n");
+        sentText = b.toString();
     }
 
     public void showResponse(ResponseData r, List<String> notes, String fileName) {
@@ -318,6 +343,7 @@ public class ResponsePanel extends JPanel {
             } else if (Formatters.looksLikeHtml(ct)) {
                 style = CodeArea.Lang.HTML;
             }
+            bodyLang = style;
             body.setLanguage(style);
             if (note != null) addNote(note);
             views.setSelectedIndex(prettyText != null ? 0 : 1);
@@ -574,8 +600,9 @@ public class ResponsePanel extends JPanel {
     private void showView() {
         int i = views.selectedIndex();
         boolean headers = i == 2;
+        boolean request = i == 3;
         if (copyButton != null) {
-            String tip = headers ? "Copy all headers" : "Copy response body";
+            String tip = headers ? "Copy all headers" : request ? "Copy the request as sent" : "Copy response body";
             copyButton.setToolTipText(tip);
             copyButton.getAccessibleContext().setAccessibleName(tip);
         }
@@ -583,7 +610,8 @@ public class ResponsePanel extends JPanel {
             cards.show(center, "headers");
             return;
         }
-        String text = i == 0 && prettyText != null ? prettyText : rawText;
+        String text = request ? sentText : i == 0 && prettyText != null ? prettyText : rawText;
+        body.setLanguage(request ? CodeArea.Lang.NONE : bodyLang);
         body.setText(text == null ? "" : text);
         body.setCaretPosition(0);
         cards.show(center, "body");
@@ -636,6 +664,7 @@ public class ResponsePanel extends JPanel {
     private void copyShown() {
         if (current == null) return;
         if (views.selectedIndex() == 2) headersView.copyAll();
+        else if (views.selectedIndex() == 3) Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(sentText), null);
         else copyBody();
     }
 

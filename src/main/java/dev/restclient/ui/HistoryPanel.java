@@ -259,6 +259,13 @@ public class HistoryPanel extends JPanel {
         return d.format(DateTimeFormatter.ofPattern("d MMMM yyyy", Locale.ENGLISH));
     }
 
+    /** "api.example.com:8443" from a sent URL; "" if there isn't one. */
+    static String host(String url) {
+        if (url == null) return "";
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^[a-zA-Z][a-zA-Z0-9+.-]*://(?:[^/?#@]*@)?([^/?#]+)").matcher(url);
+        return m.find() ? m.group(1) : "";
+    }
+
     private static String path(String url) {
         if (url == null) return "";
         String p = url.replaceFirst("^[a-zA-Z]+://[^/?#]+", "");
@@ -281,6 +288,9 @@ public class HistoryPanel extends JPanel {
             JPanel texts = Ui.transparent(new BorderLayout(0, 1));
             texts.add(pathLabel, BorderLayout.NORTH);
             texts.add(metaLabel, BorderLayout.SOUTH);
+            // URLs come from the user and from imports: always plain text
+            metaLabel.putClientProperty("html.disable", Boolean.TRUE);
+            pathLabel.putClientProperty("html.disable", Boolean.TRUE);
             row.add(method, BorderLayout.WEST);
             row.add(texts, BorderLayout.CENTER);
             JPanel b = Ui.transparent(new GridBagLayout());
@@ -304,7 +314,10 @@ public class HistoryPanel extends JPanel {
             pathLabel.setFont(Theme.mono(12f));
             pathLabel.setForeground(Theme.text());
             String env = h.environmentName == null ? "No environment" : h.environmentName;
-            metaLabel.setText(env + " · " + new SimpleDateFormat("HH:mm").format(new Date(h.timestamp)));
+            String host = host(h.sentUrl);
+            // host first (it tells two servers with the same path apart), then when, then which environment;
+            // if the sidebar is narrow, the label shortens from the end
+            metaLabel.setText((host.isEmpty() ? "" : host + " · ") + new SimpleDateFormat("HH:mm").format(new Date(h.timestamp)) + " · " + env);
             if (h.status > 0) {
                 int s = h.status;
                 badge.setText(String.valueOf(s));

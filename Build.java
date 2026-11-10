@@ -46,8 +46,11 @@ public class Build {
                 run(List.of(javaBin(), "-jar", JAR.toString()));
             }
             case "samples" -> {
-                compileMain();
-                int code = run(List.of(javaBin(), "-cp", CLASSES.toString(), "dev.restclient.store.Samples", ROOT.resolve("samples").toString()));
+                // compiled into a temporary folder, so build/ (and a jar already built there) is left alone
+                Path tmp = Files.createTempDirectory("rc-samples");
+                compile(ROOT.resolve("src/main/java"), tmp, null);
+                copyTree(ROOT.resolve("src/main/resources"), tmp);
+                int code = run(List.of(javaBin(), "-cp", tmp.toString(), "dev.restclient.store.Samples", ROOT.resolve("samples").toString()));
                 System.out.println(code == 0 ? "Wrote samples/httpbin.postman_collection.json and samples/local-httpbin.postman_environment.json"
                         : "Couldn't write the samples.");
             }

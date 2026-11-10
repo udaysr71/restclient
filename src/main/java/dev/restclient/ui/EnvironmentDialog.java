@@ -457,6 +457,10 @@ public final class EnvironmentDialog {
             more.addActionListener(a -> Ui.showBelow(envMenu(e), more));
             buttons.add(more);
         }
+        if (!current.isEnvironment() && current.collection == null) {
+            // Globals: a Postman globals file is imported with File › Import from Postman…
+            buttons.add(Ui.button("Export to Postman…", a -> frame.exportEnvironment(ctx.repo.globals(), dialog)));
+        }
         header.add(buttons, BorderLayout.EAST);
         header.revalidate();
         header.repaint();

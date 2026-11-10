@@ -78,4 +78,27 @@ class HelpersTest {
         }
         dev.restclient.testkit.Assertions.assertTrue(offenders.isEmpty(), offenders.toString());
     }
+
+    /** Unnamed tabs show where they point; history rows say which host. */
+    @Test
+    void tabAndHistoryLabels() {
+        assertEquals("/v2/orders", RequestTab.pathLabel("{{baseUrl}}/v2/orders?status=open#x"));
+        assertEquals("/get", RequestTab.pathLabel("https://httpbin.org/get"));
+        assertEquals("httpbin.org", RequestTab.pathLabel("https://httpbin.org/"));
+        assertEquals("{{baseUrl}}", RequestTab.pathLabel("{{baseUrl}}"));
+        assertEquals("localhost:8080", RequestTab.pathLabel("localhost:8080"));
+        assertEquals("/users/{{userId}}", RequestTab.pathLabel("{{baseUrl}}/users/{{userId}}/"));
+        assertEquals("", RequestTab.pathLabel("  "));
+        assertEquals("", RequestTab.pathLabel("{{"));
+        assertEquals("", RequestTab.pathLabel("http://"));
+        assertEquals("", RequestTab.pathLabel("curl https://x/y"));
+        String longPath = RequestTab.pathLabel("https://h/" + "segment/".repeat(10) + "last");
+        dev.restclient.testkit.Assertions.assertTrue(longPath.length() == 28 && longPath.startsWith("…") && longPath.endsWith("/last"), longPath);
+
+        assertEquals("api.example.com:8443", HistoryPanel.host("https://api.example.com:8443/v1?x=1"));
+        assertEquals("127.0.0.1:9", HistoryPanel.host("http://127.0.0.1:9"));
+        assertEquals("example.com", HistoryPanel.host("https://user:pw@example.com/x"));
+        assertEquals("", HistoryPanel.host("not a url"));
+        assertEquals("", HistoryPanel.host(null));
+    }
 }

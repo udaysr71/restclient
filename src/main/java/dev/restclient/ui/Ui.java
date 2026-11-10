@@ -526,7 +526,8 @@ public final class Ui {
             boolean dark = Theme.dark();
             dev.restclient.ui.laf.Paint.raised(g2, (float) r.getWidth(), (float) r.getHeight(), 8, Theme.segmentSelected(),
                     Theme.segmentSelected(), dark ? new Color(255, 255, 255, 22) : null, new Color(0, 0, 0, dark ? 90 : 26));
-            if (!dark) dev.restclient.ui.laf.Paint.outline(g2, 0, 0, (float) r.getWidth(), (float) r.getHeight() - 1, 8, 1f,
+            // outlined in every theme: on dark surfaces the fill alone was too close to the track to read as selected
+            dev.restclient.ui.laf.Paint.outline(g2, 0, 0, (float) r.getWidth(), (float) r.getHeight() - 1, 8, 1f,
                     Theme.fieldBorder());
             g2.dispose();
         }

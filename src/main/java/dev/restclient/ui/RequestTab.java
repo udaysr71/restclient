@@ -600,6 +600,39 @@ public class RequestTab extends JPanel {
         return draft.name;
     }
 
+    /**
+     * What the tab shows. A request that hasn't been named yet shows where it points (its path, or its host if
+     * there's no path), so several unsaved tabs can be told apart; once named or saved, its name.
+     */
+    public String displayTitle() {
+        if (isSaved() || !draft.name.startsWith("Untitled")) return draft.name;
+        String shown = pathLabel(draft.url);
+        return shown.isEmpty() ? draft.name : shown;
+    }
+
+    /** "/v2/orders" for "{{baseUrl}}/v2/orders?x=1"; "example.com" for "https://example.com/"; "" if there's no URL. */
+    static String pathLabel(String url) {
+        String u = url == null ? "" : url.strip();
+        if (u.isEmpty() || u.regionMatches(true, 0, "curl ", 0, 5)) return "";
+        int cut = u.length();
+        for (char stop : new char[]{'?', '#'}) {
+            int i = u.indexOf(stop);
+            if (i >= 0) cut = Math.min(cut, i);
+        }
+        u = u.substring(0, cut);
+        String rest = u.replaceFirst("^[a-zA-Z][a-zA-Z0-9+.-]*://", "");
+        int slash = rest.startsWith("{{") ? rest.indexOf('/', Math.max(0, rest.indexOf("}}"))) : rest.indexOf('/');
+        String host = slash >= 0 ? rest.substring(0, slash) : rest;
+        String path = slash >= 0 ? rest.substring(slash) : "";
+        while (path.length() > 1 && path.endsWith("/")) path = path.substring(0, path.length() - 1);
+        String label = path.length() > 1 ? path : host;
+        // nothing nameable yet (a half-typed "{{", a lone "/"): keep "Untitled request"
+        if (label.chars().noneMatch(Character::isLetterOrDigit)) return "";
+        // keep the end of a long path: that's the part that differs between requests
+        int max = 28;
+        return label.length() > max ? "…" + label.substring(label.length() - max + 1) : label;
+    }
+
     public HttpMethod method() {
         return draft.method;
     }
@@ -798,6 +831,8 @@ public class RequestTab extends JPanel {
         if (res.isError()) {
             response.showError(res, errorActions(), ctx.timeoutFor(draft), ctx.tls, notes);
         } else {
+            PreparedRequest shown = PreparedRequest.prepareMasked(draft, vars);
+            response.setSent(shown.method.name(), shown.url, shown.headers, shown.body);
             response.showResponse(res, notes, fileNameFor(p.uri));
         }
         frame.recordHistory(historyEntry(res, vars));

@@ -182,7 +182,11 @@ public final class SettingsDialog {
         };
         showIssues.run();
         f.full(themeIssues);
-        f.full(Ui.row(Theme.scaled(14),
+        // under the picker, in the controls' column: what a custom theme is, and the two things you can do
+        JLabel themeHint = Ui.small("Custom themes are .css files; the app updates as you save one.");
+        themeHint.setToolTipText(AppPaths.display(Themes.dir()));
+        f.under(themeHint);
+        f.under(Ui.row(Theme.scaled(14),
                 Ui.linkButton("Export Current Theme…", e -> frame.exportTheme()),
                 Ui.linkButton("Open Themes Folder", e -> SettingsDialog.reveal(Themes.dir()))));
         Runnable sync = () -> {
@@ -210,9 +214,8 @@ public final class SettingsDialog {
                 });
         codeFont.getAccessibleContext().setAccessibleName("Code font");
         f.row("Code font", codeFont);
-        f.note("Themes are .css files in " + AppPaths.display(Themes.dir()) + "; the app updates as you save one. "
-                + "Code font is used for URLs, headers and bodies. Fonts made for easier reading, such as Atkinson "
-                + "Hyperlegible, Lexend or OpenDyslexic, are listed first once installed. Size follows View \u203a Zoom.");
+        f.under(Ui.small("Used for URLs, headers and bodies."));
+        f.under(Ui.small("Easier-to-read fonts are listed first. Size follows View \u203a Zoom."));
         JCheckBox reduce = new JCheckBox("Reduce motion", s.reduceMotion);
         reduce.addActionListener(e -> {
             s.reduceMotion = reduce.isSelected();
@@ -505,6 +508,15 @@ public final class SettingsDialog {
             gc.weightx = 1;
             gc.insets = new Insets(4, 0, 4, 0);
             panel.add(field, gc);
+        }
+
+        /** A hint or links under the control above, in the controls' column. */
+        void under(Component c) {
+            GridBagConstraints gc = base();
+            gc.gridx = 1;
+            gc.weightx = 1;
+            gc.insets = new Insets(0, 0, 6, 0);
+            panel.add(c, gc);
         }
 
         void full(Component c) {
