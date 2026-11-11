@@ -2076,6 +2076,38 @@ public final class FeatureCheck {
             return null;
         });
         check("They're saved with the request", () -> get.request.locals.size() == 3 && !t.isDirty());
+        // names with spaces, in every scope
+        call(() -> {
+            env("Staging").variables.add(new Variable("api host", http));
+            ctx().repo.saveEnvironment(env("Staging"));
+            ctx().repo.globals().variables.add(new Variable("page size", "25"));
+            ctx().repo.saveEnvironment(ctx().repo.globals());
+            return null;
+        });
+        edt(frame::variablesChanged);
+        RequestTab spaced = newTab();
+        url(spaced, "{{api host}}/echo/spaces?n={{page size}}&who={{my name}}");
+        KeyValueTable spacedLocals = field(spaced, "localsTable");
+        check("A name with a space that isn't defined is flagged as one variable", () -> spaced.resolver().unresolved(spaced.draft().url).equals(java.util.Set.of("my name")));
+        edt(() -> spacedLocals.setRows(List.of(kv("my name", "ann lee", true))));
+        edt(() -> invoke(spaced, "changed"));
+        check("Environment, Globals and local names with spaces all resolve", () -> spaced.resolver().isDefined("api host")
+                && spaced.resolver().isDefined("page size") && spaced.resolver().isDefined("my name"));
+        send(spaced);
+        verify("...and are sent", lastSeen().path().equals("/echo/spaces?n=25&who=ann%20lee"), lastSeen().path());
+        check("No “Not defined” note", () -> !responseSays(spaced, "Not defined"));
+        check("Autocomplete offers them after {{ and a first word", () -> {
+            List<String> m = invoke(VarSupport.of((JTextComponent) field(spaced, "urlField")), "matchNames", "api h");
+            return m.contains("api host");
+        });
+        KeyValueTable spacedCaps = field(spaced, "capturesTable");
+        edt(() -> spacedCaps.setRows(List.of(kv("last path", "body.path", true))));
+        edt(() -> invoke(spaced, "changed"));
+        send(spaced);
+        check("A capture can save into a name with a space", () -> env("Staging").variables.stream()
+                .anyMatch(v -> v.key.equals("last path") && v.value.startsWith("/echo/spaces")));
+        edt(() -> frame.openSaved(seedApi, get, false));
+
         // a Postman collection whose pre-request scripts set local variables
         Path pm = home.resolve("locals.postman_collection.json");
         try {

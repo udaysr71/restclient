@@ -477,7 +477,7 @@ class PostmanTest {
                         "pm.variables.set(\\"c\\", \\"x\\" + evil());",
                         "pm.variables.set(\\"d\\", \\"x\\"); doSomething();",
                         "pm.environment.set(\\"e\\", \\"persisted\\");",
-                        "pm.variables.set(\\"bad name\\", \\"x\\");"
+                        "pm.variables.set(\\"bad!name\\", \\"x\\");"
                       ]}}],
                       "request": {"method": "GET", "url": "https://h/{{a}}"}}]}""";
         Postman.Result r = Postman.read(json);

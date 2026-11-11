@@ -555,8 +555,8 @@ public final class VarSupport {
         }
         int open = before.lastIndexOf("{{");
         if (open >= 0 && before.indexOf("}}", open) < 0) {
-            String prefix = before.substring(open + 2).trim();
-            if (prefix.matches("[A-Za-z0-9_.\\-$]*")) {
+            String prefix = before.substring(open + 2).stripLeading(); // names can have spaces: "{{base u" is still one name
+            if (prefix.matches("[\\p{L}\\p{N}_.\\-$ ]*")) {
                 List<String> matches = matchNames(prefix);
                 if (!matches.isEmpty()) {
                     showCompletion(matches, open, false, caret);

@@ -39,9 +39,9 @@ public final class Capture {
     private Capture() {
     }
 
-    /** True when {@code name} can be a variable name (the same characters {@code {{name}}} accepts, no leading $). */
+    /** True when {@code name} can be a variable name (what {@code {{name}}} accepts, spaces between words included; no $). */
     public static boolean validName(String name) {
-        return name != null && name.matches("[A-Za-z0-9_.\\-]{1,128}");
+        return dev.restclient.vars.VariableResolver.isUserName(name);
     }
 
     /** Runs every enabled rule against a response. */
@@ -54,7 +54,7 @@ public final class Capture {
             String name = rule.key.trim();
             String source = rule.value == null ? "" : rule.value.trim();
             if (!validName(name)) {
-                out.add(new Outcome(name, source, null, "“" + name + "” can't be a variable name (use letters, digits, _ . -)"));
+                out.add(new Outcome(name, source, null, "“" + name + "” can't be a variable name (use letters, digits, spaces, _ . -)"));
                 continue;
             }
             try {

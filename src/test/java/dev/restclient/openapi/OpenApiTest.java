@@ -276,7 +276,7 @@ class OpenApiTest {
                 info:
                   title: "<html><b>Evil</b>\\u0007 name"
                 paths:
-                  /a/{bad name}/{ok}:
+                  /a/{bad*name}/{ok}:
                     get:
                       summary: "<html><img src=x>"
                       tags: ["<html>tag"]
@@ -301,7 +301,7 @@ class OpenApiTest {
         assertFalse(folder.name.toLowerCase().startsWith("<html"), folder.name);
         RequestDef q = folder.children.get(0).request;
         assertFalse(q.name.toLowerCase().startsWith("<html"), q.name);
-        assertEquals("{{baseUrl}}/a/{bad name}/{{ok}}", q.url, "only names that can be variables become variables");
+        assertEquals("{{baseUrl}}/a/{bad*name}/{{ok}}", q.url, "only names that can be variables become variables");
         assertEquals("X-BadInjected1", q.headers.get(0).key, "header names are reduced to legal characters");
         assertFalse(q.headers.get(0).value.contains("\n") || q.headers.get(0).value.contains("\r"));
         assertEquals("", q.body, "a reference loop gives no example rather than hanging");

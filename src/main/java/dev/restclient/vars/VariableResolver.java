@@ -48,7 +48,18 @@ public final class VariableResolver {
     public record Token(int start, int end, String name) {
     }
 
-    public static final Pattern VAR = Pattern.compile("\\{\\{\\s*([A-Za-z0-9_.\\-$]+)\\s*}}");
+    /**
+     * What a variable name may be: letters and digits (of any alphabet), {@code _ . - $}, and spaces between
+     * words ("base url", "API Key"). Spaces around the name inside the braces aren't part of it.
+     */
+    public static final String NAME = "[\\p{L}\\p{N}_.\\-$]+(?: +[\\p{L}\\p{N}_.\\-$]+)*";
+    public static final Pattern VAR = Pattern.compile("\\{\\{\\s*(" + NAME + ")\\s*}}");
+    private static final Pattern USER_NAME = Pattern.compile(NAME);
+
+    /** True when {@code name} can be a variable of the user's own: a valid name that isn't a {@code $built-in}. */
+    public static boolean isUserName(String name) {
+        return name != null && name.length() <= 128 && !name.contains("$") && USER_NAME.matcher(name).matches();
+    }
     public static final String MASK = "••••••••";
     private static final int MAX_DEPTH = 5;
 
@@ -83,7 +94,7 @@ public final class VariableResolver {
             for (dev.restclient.model.KeyValue kv : locals) {
                 if (!kv.enabled || kv.key == null) continue;
                 String name = kv.key.trim();
-                if (name.matches("[A-Za-z0-9_.\\-]{1,128}")) vars.add(new Variable(name, kv.value == null ? "" : kv.value));
+                if (isUserName(name)) vars.add(new Variable(name, kv.value == null ? "" : kv.value));
             }
         }
         if (vars.isEmpty()) return this;
@@ -142,7 +153,7 @@ public final class VariableResolver {
         if (name == null || DynamicVars.isDynamic(name)) return out;
         for (Layer l : layers) {
             for (Variable v : l.vars) {
-                if (v.enabled && name.equals(v.key)) {
+                if (v.enabled && v.key != null && name.equals(v.key.trim())) { // a stray space typed after a name doesn't hide it
                     out.add(new Resolution(name, v.value == null ? "" : v.value, l.scope, l.sourceName, v.secret));
                     break;
                 }
@@ -212,7 +223,7 @@ public final class VariableResolver {
     public Set<String> names() {
         Set<String> out = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
         for (Layer l : layers) {
-            for (Variable v : l.vars) if (v.enabled && v.key != null && !v.key.isBlank()) out.add(v.key);
+            for (Variable v : l.vars) if (v.enabled && v.key != null && !v.key.isBlank()) out.add(v.key.trim());
         }
         return out;
     }

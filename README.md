@@ -172,6 +172,9 @@ check runs — for that request only. The alternative, the JVM-wide system prope
 verified requests, so it is deliberately **not** used. Verified and skipped requests use two separate
 `HttpClient` instances. (`TlsManagerTest` checks this end to end against a local HTTPS server.)
 
+Names can be several words: `{{base url}}`, `{{API Key}}`. A name is letters and digits (of any alphabet),
+`_`, `.`, `-`, and spaces between words; spaces just inside the braces (`{{ token }}`) aren't part of it.
+
 ### Local variables
 
 A request can carry its own variables: **Params › Local variables**. They apply to that request only and win
@@ -474,7 +477,7 @@ Build.java              JDK-only build script
 ## Tests
 
 ```bash
-java Build.java test           # 160 unit tests
+java Build.java test           # 161 unit tests
 java Build.java uicheck        # needs a display; on Linux CI: xvfb-run java Build.java uicheck
 java Build.java featurecheck   # just the end-to-end feature check
 ```
@@ -484,7 +487,7 @@ java Build.java featurecheck   # just the end-to-end feature check
 - **Interaction check** (98 checks): editing in fields and tables, `{{` autocomplete, the method combo, the
   palette with arrow keys, tab menus and drag-to-reorder, keyboard reachability, Save state rules, empty-URL
   handling, delete with Undo, zoom, themes and theme files, fonts, and an accessible-name audit.
-- **Feature check** (363 checks, then 14 after a restart and 6 on a first launch). It runs against a local HTTP and HTTPS server (self-signed certificate made
+- **Feature check** (369 checks, then 14 after a restart and 6 on a first launch). It runs against a local HTTP and HTTPS server (self-signed certificate made
   with `keytool`) that records every request, so it checks what the server actually received and what was
   saved to disk:
   - every method and body type, and headers and Basic/Bearer auth

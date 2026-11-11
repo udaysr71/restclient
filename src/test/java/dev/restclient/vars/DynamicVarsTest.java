@@ -84,18 +84,44 @@ class DynamicVarsTest {
         VariableResolver base = new VariableResolver(e, null, null);
         java.util.List<dev.restclient.model.KeyValue> locals = java.util.List.of(
                 new dev.restclient.model.KeyValue("userId", "99"), new dev.restclient.model.KeyValue("page", "{{userId}}-{{host}}"),
-                new dev.restclient.model.KeyValue("off", "x", false), new dev.restclient.model.KeyValue("bad name", "x"),
+                new dev.restclient.model.KeyValue("off", "x", false), new dev.restclient.model.KeyValue("bad{name", "x"),
                 new dev.restclient.model.KeyValue("$guid", "fixed"));
         VariableResolver r = base.withLocals(locals);
         assertEquals("99", r.resolve("{{userId}}"));
         assertEquals(VariableResolver.Scope.REQUEST, r.lookup("userId").orElseThrow().scope());
         assertEquals(2, r.lookupAll("userId").size(), "the environment's value is still there, overridden");
         assertEquals("99-api.example.com", r.resolve("{{page}}"), "locals can use other variables");
-        assertFalse(r.isDefined("off") || r.isDefined("bad name"), "switched-off rows and impossible names are ignored");
+        assertFalse(r.isDefined("off") || r.isDefined("bad{name"), "switched-off rows and impossible names are ignored");
         assertFalse(r.resolve("{{$guid}}").equals("fixed"), "built-ins can't be overridden");
         assertTrue(r.names().contains("page"));
         assertEquals("7", base.resolve("{{userId}}"), "the original resolver is untouched");
         assertTrue(base.withLocals(java.util.List.of()) == base);
         assertEquals("99", r.recording().replaying().resolve("{{userId}}"), "copies keep the locals");
+    }
+
+    @Test
+    void namesMayContainSpacesAndOtherAlphabets() {
+        Environment e = new Environment();
+        e.variables.add(new Variable("base url", "https://api.example.com"));
+        e.variables.add(new Variable("API Key ", "k-123")); // typed with a stray space after it
+        e.variables.add(new Variable("größe", "42"));
+        e.variables.add(new Variable("a  b", "two spaces"));
+        VariableResolver r = new VariableResolver(e, null, null);
+        assertEquals("https://api.example.com/v1?k=k-123&n=42", r.resolve("{{base url}}/v1?k={{ API Key }}&n={{größe}}"));
+        assertEquals("two spaces", r.resolve("{{a  b}}"));
+        assertTrue(r.isDefined("base url") && r.isDefined("API Key"));
+        assertTrue(r.names().contains("API Key"), "listed without the stray space");
+        assertEquals(java.util.Set.of("not here"), r.unresolved("{{base url}} {{not here}}"));
+        assertEquals("base url", VariableResolver.tokens("x {{  base url  }} y").get(0).name(), "spaces around the name aren't part of it");
+        assertTrue(VariableResolver.references("{{base url}}/x", "base url"));
+        // still not variables: JSON-looking braces, empty braces, names with other punctuation
+        for (String not : new String[]{"{{ \"a\": 1 }}", "{{}}", "{{   }}", "{{a/b}}", "{{a:b}}", "{{a{b}}", "{{a\nb}}"}) {
+            assertTrue(VariableResolver.tokens(not).isEmpty(), not);
+        }
+        assertTrue(VariableResolver.isUserName("base url") && VariableResolver.isUserName("größe") && VariableResolver.isUserName("a.b-c_d"));
+        assertFalse(VariableResolver.isUserName(" lead") || VariableResolver.isUserName("trail ") || VariableResolver.isUserName("")
+                || VariableResolver.isUserName("$guid") || VariableResolver.isUserName("a{b") || VariableResolver.isUserName("x".repeat(129)));
+        java.util.List<dev.restclient.model.KeyValue> locals = java.util.List.of(new dev.restclient.model.KeyValue(" base url ", "http://local"));
+        assertEquals("http://local", r.withLocals(locals).resolve("{{base url}}"), "local variables too");
     }
 }

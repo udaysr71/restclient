@@ -61,7 +61,7 @@ class CaptureTest {
     void explainsWhatIsMissing() {
         List<KeyValue> rules = List.of(new KeyValue("a", "data.nope"), new KeyValue("b", "data.items[5].id"),
                 new KeyValue("c", "data.token.deeper"), new KeyValue("d", "data.items[x]"), new KeyValue("e", ""),
-                new KeyValue("bad name", "status"), new KeyValue("$guid", "status"), new KeyValue("off", "status", false),
+                new KeyValue("bad{name", "status"), new KeyValue("$guid", "status"), new KeyValue("off", "status", false),
                 new KeyValue("f", "data.token[0]"));
         List<Capture.Outcome> out = Capture.run(rules, response(BODY));
         assertEquals(8, out.size(), "the disabled rule is skipped");
