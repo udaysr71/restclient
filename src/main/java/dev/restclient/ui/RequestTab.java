@@ -329,14 +329,16 @@ public class RequestTab extends JPanel {
     private JPanel buildAuth() {
         JPanel p = new JPanel(new BorderLayout(0, 12));
         p.setBorder(Ui.pad(12, 14, 10, 14));
-        JPanel top = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        // no leading gap, so "Type" lines up with the labels of the fields below it
+        JPanel top = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 0, 0));
         JLabel l = new JLabel("Type");
         l.setLabelFor(authType);
+        l.setBorder(Ui.pad(0, 0, 0, 12));
         top.add(l);
         top.add(authType);
         p.add(top, BorderLayout.NORTH);
 
-        JPanel none = Ui.transparent(new FlowLayout(FlowLayout.LEFT));
+        JPanel none = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 0, 0));
         none.add(Ui.secondary("No Authorization header is added. Headers you set yourself are always sent."));
         JPanel basic = form(new String[]{"Username", "Password"}, new Component[]{authUser, authPass});
         JPanel bearer = form(new String[]{"Token"}, new Component[]{authToken});
@@ -385,6 +387,13 @@ public class RequestTab extends JPanel {
             gc.insets = new Insets(i == 0 ? 0 : 8, 0, 0, 0);
             p.add(fields[i], gc);
         }
+        // takes the spare height, so the rows sit at the top instead of floating in the middle
+        gc.gridx = 0;
+        gc.gridy = labels.length;
+        gc.gridwidth = 2;
+        gc.weighty = 1;
+        gc.fill = GridBagConstraints.BOTH;
+        p.add(Ui.transparent(null), gc);
         return p;
     }
 
