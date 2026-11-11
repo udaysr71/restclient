@@ -447,6 +447,8 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
 
     @Override
     public void editVariable(String name) {
+        RequestTab t = currentRequestTab();
+        if (t != null && t.showLocal(name)) return; // a local variable of the request on screen wins: edit it there
         showEnvironments(null, name, false);
     }
 

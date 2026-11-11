@@ -111,7 +111,7 @@ public final class FeatureCheck {
                 FeatureCheck::curl, FeatureCheck::collections, FeatureCheck::saving, FeatureCheck::historySection,
                 FeatureCheck::environments, FeatureCheck::palette, FeatureCheck::tabsAndShortcuts,
                 FeatureCheck::settings, FeatureCheck::helpAndDialogs, FeatureCheck::throughTheUi, FeatureCheck::postman,
-                FeatureCheck::dynamicVariables, FeatureCheck::uploads, FeatureCheck::captures, FeatureCheck::copyAsCode, FeatureCheck::openApi, FeatureCheck::sampleCollection, FeatureCheck::prepareRelaunch);
+                FeatureCheck::dynamicVariables, FeatureCheck::uploads, FeatureCheck::captures, FeatureCheck::localVariables, FeatureCheck::copyAsCode, FeatureCheck::openApi, FeatureCheck::sampleCollection, FeatureCheck::prepareRelaunch);
         // -Dfeaturecheck.only=18,19 runs just those sections (counting from 0), for working on one of them
         String only = System.getProperty("featurecheck.only");
         if (only != null) {
@@ -2020,6 +2020,106 @@ public final class FeatureCheck {
                 && lastSeen().path().contains("%7B%7B$randomEmail%7D%7D"));
         run("copyCurl");
         verify("Copy as cURL fills built-ins in", clipboard().matches("(?s).*X-Request-Id: " + uuid + ".*"), clipboard());
+    }
+
+    // ------------------------------------------------------------------ local variables
+
+    private static void localVariables() {
+        section("Local variables: a request's own values that win over every scope");
+        ApiCollection seedApi = collection("Seed API");
+        CollectionNode get = call(() -> seedApi.items.get(0).children.get(0));
+        edt(() -> frame.openSaved(seedApi, get, false));
+        RequestTab t = currentTab();
+        String before = call(() -> t.draft().url);
+        UnderlineTabs tabs = field(t, "editorTabs");
+        KeyValueTable locals = field(t, "localsTable");
+        Ui.Segmented view = field(t, "paramsView");
+        edt(() -> tabs.setSelectedIndex(0));
+        check("Params has a Query / Local variables switch", () -> view.isShowing() && !locals.isShowing());
+        segment(view, 1);
+        check("...which shows the local variables table", locals::isShowing);
+        url(t, "{{baseUrl}}/echo/local/{{userId}}/{{onlyHere}}");
+        KeyValueTable headers = field(t, "headersTable");
+        List<KeyValue> headersBefore = call(headers::getRows);
+        String envUserId = call(() -> env("Staging").variables.stream().filter(v -> v.key.equals("userId")).map(v -> v.value).findFirst().orElse(""));
+        edt(() -> headers.setRows(List.of(kv("X-Local", "{{onlyHere}}", true))));
+        check("Before it's defined, the name is not defined", () -> !t.resolver().isDefined("onlyHere"));
+        edt(() -> locals.setRows(List.of(kv("userId", "local-99", true), kv("onlyHere", "v-{{userId}}", true), kv("off", "x", false))));
+        edt(() -> invoke(t, "changed"));
+        check("The tab title counts them", () -> tabs.getTitleAt(0).endsWith("· 2 local"));
+        check("The request is marked as changed", t::isDirty);
+        check("They resolve, ahead of the environment's value", () -> t.resolver().lookup("userId").orElseThrow().scope() == VariableResolver.Scope.REQUEST
+                && t.resolver().isDefined("onlyHere") && !t.resolver().isDefined("off"));
+        HistoryEntry h = send(t);
+        verify("The server receives the local values", lastSeen().path().equals("/echo/local/local-99/v-local-99")
+                && "v-local-99".equals(lastSeen().header("X-Local")), lastSeen().toString());
+        check("No “Not defined” note", () -> !responseSays(t, "Not defined"));
+        verify("History keeps the locals with the request", h.request.locals.size() == 3 && h.sentUrl.endsWith("/local-99/v-local-99"), h.sentUrl);
+        run("copyCurl");
+        verify("Copy as cURL uses them", clipboard().contains("/echo/local/local-99/v-local-99"), clipboard());
+
+        RequestTab other = newTab();
+        url(other, "{{baseUrl}}/echo/other/{{userId}}/{{onlyHere}}");
+        send(other);
+        verify("Another request doesn't see them", lastSeen().path().startsWith("/echo/other/" + envUserId + "/") && !lastSeen().path().contains("local-99"), lastSeen().path());
+        check("The environment's own value is untouched", () -> env("Staging").variables.stream().anyMatch(v -> v.key.equals("userId") && v.value.equals(envUserId)));
+
+        edt(() -> frame.openSaved(seedApi, get, false));
+        check("“Edit” on a local variable goes to the request's own table", () -> {
+            edt(() -> tabs.setSelectedIndex(1));
+            edt(() -> frame.editVariable("onlyHere"));
+            return tabs.getSelectedIndex() == 0 && locals.isShowing() && locals.table().getSelectedRow() == 1 && topDialog() == null;
+        });
+        edt(() -> frame.saveTab(t, false));
+        call(() -> {
+            ctx().repo.flush();
+            return null;
+        });
+        check("They're saved with the request", () -> get.request.locals.size() == 3 && !t.isDirty());
+        // a Postman collection whose pre-request scripts set local variables
+        Path pm = home.resolve("locals.postman_collection.json");
+        try {
+            Files.writeString(pm, """
+                    {"info": {"name": "PM Locals", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+                     "event": [{"listen": "prerequest", "script": {"exec": ["pm.variables.set('tenant', 'acme');"]}}],
+                     "item": [{"name": "Uses locals", "event": [{"listen": "prerequest", "script": {"exec": [
+                         "pm.variables.set('userId', 4242);", "pm.variables.set('rid', pm.variables.replaceIn('r-{{$randomInt}}'));"]}}],
+                       "request": {"method": "GET", "header": [{"key": "X-Rid", "value": "{{rid}}"}],
+                                   "url": "%s/echo/pm/{{tenant}}/{{userId}}"}}]}""".formatted(http));
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException(e);
+        }
+        edt(() -> frame.importPostman(pm));
+        ApiCollection imported = collection("PM Locals");
+        check("A Postman import turns pm.variables.set lines into local variables", () -> imported != null
+                && imported.items.get(0).request.locals.stream().map(k -> k.key + "=" + k.value).toList()
+                .equals(List.of("tenant=acme", "userId=4242", "rid=r-{{$randomInt}}")));
+        check("...and says so instead of reporting the scripts as dropped", () -> anyLabel(frame.getContentPane(), x -> x.contains("1 thing to know")));
+        edt(() -> frame.openSaved(imported, imported.items.get(0), false));
+        check("They show in the request's Local variables", () -> {
+            KeyValueTable l = field(currentTab(), "localsTable");
+            UnderlineTabs tb = field(currentTab(), "editorTabs");
+            return l.getRows().size() == 3 && tb.getTitleAt(0).equals("Params · 3 local");
+        });
+        send(currentTab());
+        verify("The imported request sends them, over the environment's userId", lastSeen().path().equals("/echo/pm/acme/4242")
+                && String.valueOf(lastSeen().header("X-Rid")).matches("r-\\d{1,4}"), lastSeen().toString());
+        FileChoosers.testPicker = (title, name) -> home.resolve("locals-out.json").toFile();
+        edt(() -> frame.exportCollection(imported));
+        FileChoosers.testPicker = null;
+        check("Exporting writes them back as a pre-request script", () -> {
+            String out = readFile(home.resolve("locals-out.json"));
+            return out.contains("\"listen\": \"prerequest\"") && out.contains("pm.variables.set(\\\"userId\\\", \\\"4242\\\");")
+                    && out.contains("pm.variables.replaceIn(\\\"r-{{$randomInt}}\\\")");
+        });
+        edt(() -> frame.openSaved(seedApi, get, false));
+
+        // put the seeded request back as it was for the sections that follow
+        edt(() -> locals.setRows(List.of()));
+        edt(() -> headers.setRows(headersBefore));
+        url(t, before);
+        edt(() -> invoke(t, "changed"));
+        edt(() -> frame.saveTab(t, false));
     }
 
     // ------------------------------------------------------------------ uploads

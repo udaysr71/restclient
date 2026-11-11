@@ -102,6 +102,7 @@ public final class AppContext {
         for (KeyValue kv : r.form) if (VariableResolver.references(kv.key, name) || VariableResolver.references(kv.value, name)) return true;
         for (KeyValue kv : r.multipart) if (VariableResolver.references(kv.key, name) || VariableResolver.references(kv.value, name)) return true;
         if (VariableResolver.references(r.bodyFile, name)) return true;
+        for (KeyValue kv : r.locals) if (kv.enabled && VariableResolver.references(kv.value, name)) return true;
         Auth a = r.auth;
         return a != null && (VariableResolver.references(a.username, name) || VariableResolver.references(a.password, name)
                 || VariableResolver.references(a.token, name));

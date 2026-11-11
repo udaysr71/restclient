@@ -16,6 +16,7 @@ import java.util.regex.Pattern;
 /**
  * Resolves {@code {{name}}} placeholders. Lookup order, highest first:
  * <ol>
+ *   <li>the request's own local variables, when there are any ({@link #withLocals})</li>
  *   <li>the active environment</li>
  *   <li>the collection the request belongs to</li>
  *   <li>globals</li>
@@ -28,7 +29,9 @@ import java.util.regex.Pattern;
  */
 public final class VariableResolver {
     public enum Scope {
-        ENVIRONMENT("environment"), COLLECTION("collection"), GLOBAL("global");
+        ENVIRONMENT("environment"), COLLECTION("collection"), GLOBAL("global"),
+        /** A request's own local variables: they win over every other scope, for that request only. */
+        REQUEST("request");
 
         public final String label;
 
@@ -68,6 +71,25 @@ public final class VariableResolver {
     private VariableResolver(VariableResolver from) {
         layers.addAll(from.layers);
         environmentName = from.environmentName;
+    }
+
+    /**
+     * A copy in which a request's local variables come first, ahead of the environment. Rows that are switched
+     * off, or whose name can't be a variable name, are left out.
+     */
+    public VariableResolver withLocals(List<dev.restclient.model.KeyValue> locals) {
+        List<Variable> vars = new ArrayList<>();
+        if (locals != null) {
+            for (dev.restclient.model.KeyValue kv : locals) {
+                if (!kv.enabled || kv.key == null) continue;
+                String name = kv.key.trim();
+                if (name.matches("[A-Za-z0-9_.\\-]{1,128}")) vars.add(new Variable(name, kv.value == null ? "" : kv.value));
+            }
+        }
+        if (vars.isEmpty()) return this;
+        VariableResolver r = new VariableResolver(this);
+        r.layers.add(0, new Layer(Scope.REQUEST, "This request", vars));
+        return r;
     }
 
     /** A copy that remembers every dynamic value it hands out. */

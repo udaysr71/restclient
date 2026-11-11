@@ -395,6 +395,7 @@ public final class EnvironmentDialog {
 
     private Scope findScopeByName(VariableResolver.Resolution r) {
         return switch (r.scope()) {
+            case REQUEST -> null; // edited in the request itself
             case ENVIRONMENT -> {
                 Environment a = ctx.activeEnvironment();
                 yield a == null ? null : scope(a.id);
