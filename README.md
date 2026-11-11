@@ -127,9 +127,10 @@ Use `{{name}}` anywhere: URL, params, headers, body, auth fields.
 
 Lookup order (first match wins):
 
-1. the **active environment** (picker in the toolbar, or ⌘E / Ctrl+E)
-2. the **collection** the request belongs to
-3. **Globals**
+1. the request's own **local variables** (Params › *Local variables*)
+2. the **active environment** (picker in the toolbar, or ⌘E / Ctrl+E)
+3. the **collection** the request belongs to
+4. **Globals**
 
 Variables can be disabled or marked **secret**. Secret values are masked in the UI, in hover popovers
 (until you click *Reveal*), and in history snapshots. Values may themselves contain variables.
@@ -170,6 +171,20 @@ check runs — for that request only. The alternative, the JVM-wide system prope
 `jdk.internal.httpclient.disableHostnameVerification`, is read once at startup and would also weaken
 verified requests, so it is deliberately **not** used. Verified and skipped requests use two separate
 `HttpClient` instances. (`TlsManagerTest` checks this end to end against a local HTTPS server.)
+
+### Local variables
+
+A request can carry its own variables: **Params › Local variables**. They apply to that request only and win
+over every other scope, so you can try a different `userId` or point one request at another host without
+touching the environment. Other requests never see them. Their values can use other variables
+(`run-{{$timestamp}}`, `{{host}}/v2`), and hovering a `{{name}}` shows *This request · local* with the value
+it overrides.
+
+They are saved with the request, so they're still there next time; switch a row off to go back to the
+environment's value. This is the nearest thing to Postman's local variables, which a script sets for one run
+and then forgets: the app has no scripts or collection runner, so its locals are typed in and kept.
+Postman collections that set locals in a pre-request script import into this table, and exports write them
+back the same way; see [Postman](#postman).
 
 ### Built-in variables
 
@@ -300,6 +315,7 @@ second import of the same file becomes "Shop API (2)".
 | URL as text or as parts; disabled query params; `:id` path variables | The URL, disabled params kept disabled, path variables filled in |
 | Raw bodies (JSON, XML, text), `x-www-form-urlencoded` | JSON, XML, Text, Form bodies |
 | `form-data` with text and file fields; binary (`file`) bodies | Multipart and File bodies, with the file paths |
+| Pre-request lines that set a local variable to a fixed value: `pm.variables.set("userId", "42")` | The request's Local variables; ones set on a folder or the collection go to every request inside |
 | Test-script lines that save a value: `pm.environment.set("token", pm.response.json().token)` | Capture rules |
 | `{{$guid}}`, `{{$timestamp}}`, `{{$isoTimestamp}}`, `{{$randomInt}}` | The same built-in variables |
 | GraphQL body | A JSON body of `{"query", "variables"}` |
@@ -333,6 +349,16 @@ Scripts are never run. The one thing read out of a test script is the common "sa
 with `pm.response.json().path`, a variable holding `pm.response.json()`, `pm.response.headers.get("…")`,
 `pm.response.code` or `pm.response.text()`. Those lines become Capture rules; anything else in the script
 is reported as left out. On export, Capture rules are written back as such lines, so they work in Postman.
+
+Local variables work the same way. In a pre-request script, `pm.variables.set("name", …)` with a fixed value
+becomes a local variable: a quoted string, a number, `true`/`false`, `pm.variables.replaceIn("{{$guid}}")`,
+or another variable such as `pm.environment.get("host")` (imported as `{{host}}`). A value that has to be
+computed (`Date.now()`, string concatenation, anything with code around it) is not guessed at; that script
+is reported as left out. On export, local variables are written as a pre-request script of such lines.
+
+One difference to know: in Postman, `pm.variables.set` in a *test* script keeps a response value for the
+rest of a collection run only. There are no runs here, so that line becomes a Capture rule, which saves the
+value into the environment or Globals where later requests can use it.
 
 File paths in an imported collection come from the file, and a request that uploads a file sends it to
 whatever server the request names. The import says how many requests upload files; check the paths in the
@@ -448,7 +474,7 @@ Build.java              JDK-only build script
 ## Tests
 
 ```bash
-java Build.java test           # 157 unit tests
+java Build.java test           # 160 unit tests
 java Build.java uicheck        # needs a display; on Linux CI: xvfb-run java Build.java uicheck
 java Build.java featurecheck   # just the end-to-end feature check
 ```
@@ -458,7 +484,7 @@ java Build.java featurecheck   # just the end-to-end feature check
 - **Interaction check** (98 checks): editing in fields and tables, `{{` autocomplete, the method combo, the
   palette with arrow keys, tab menus and drag-to-reorder, keyboard reachability, Save state rules, empty-URL
   handling, delete with Undo, zoom, themes and theme files, fonts, and an accessible-name audit.
-- **Feature check** (344 checks, then 14 after a restart and 6 on a first launch). It runs against a local HTTP and HTTPS server (self-signed certificate made
+- **Feature check** (363 checks, then 14 after a restart and 6 on a first launch). It runs against a local HTTP and HTTPS server (self-signed certificate made
   with `keytool`) that records every request, so it checks what the server actually received and what was
   saved to disk:
   - every method and body type, and headers and Basic/Bearer auth
@@ -470,6 +496,7 @@ java Build.java featurecheck   # just the end-to-end feature check
   - cURL copy → import → send round trips
   - built-in variables as the server receives them, and that History shows the same values
   - multipart and file uploads byte for byte, missing files, and the cURL round trip
+  - a request's local variables overriding the environment, for that request only
   - capture rules into environment, collection and Globals variables, and the next request using them
   - Copy as Code in all four languages; the generated Java is compiled and run against the test server
   - OpenAPI YAML and Swagger JSON imports, then sending the imported requests

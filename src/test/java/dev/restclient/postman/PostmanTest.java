@@ -453,4 +453,69 @@ class PostmanTest {
         assertTrue(notes.contains("4 values that test scripts saved"), notes);
         assertTrue(notes.contains("{{$randomEmail}}") && !notes.contains("{{$timestamp}}"), notes);
     }
+
+    @Test
+    void preRequestScriptsThatSetLocalVariablesBecomeLocalVariables() throws Exception {
+        String json = """
+                {"info": {"name": "L", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+                 "event": [{"listen": "prerequest", "script": {"exec": ["pm.variables.set('tenant', 'acme');", "pm.variables.set('region', 'eu')"]}}],
+                 "item": [
+                   {"name": "Folder", "event": [{"listen": "prerequest", "script": {"exec": ["pm.variables.set(\\"region\\", \\"us\\");"]}}],
+                    "item": [{"name": "Inside", "event": [{"listen": "prerequest", "script": {"exec": [
+                        "// set up",
+                        "pm.variables.set(\\"userId\\", 42);",
+                        "pm.variables.set('flag', true)",
+                        "pm.variables.set(\\"quote\\", \\"it's \\\\\\"q\\\\\\" \\\\\\\\ \\\\n\\\\u00e9\\");",
+                        "pm.variables.set(\\"rid\\", pm.variables.replaceIn('{{$guid}}'));",
+                        "pm.variables.set(\\"host\\", pm.environment.get(\\"baseHost\\"));",
+                        "pm.variables.set(\\"tenant\\", \\"mine\\");"
+                      ]}}],
+                      "request": {"method": "GET", "url": "https://h/{{tenant}}/{{region}}/{{userId}}"}}]},
+                   {"name": "Mixed", "event": [{"listen": "prerequest", "script": {"exec": [
+                        "pm.variables.set(\\"a\\", \\"1\\");",
+                        "pm.variables.set(\\"b\\", Date.now());",
+                        "pm.variables.set(\\"c\\", \\"x\\" + evil());",
+                        "pm.variables.set(\\"d\\", \\"x\\"); doSomething();",
+                        "pm.environment.set(\\"e\\", \\"persisted\\");",
+                        "pm.variables.set(\\"bad name\\", \\"x\\");"
+                      ]}}],
+                      "request": {"method": "GET", "url": "https://h/{{a}}"}}]}""";
+        Postman.Result r = Postman.read(json);
+        RequestDef inside = r.collection().items.get(0).children.get(0).request;
+        assertEquals(List.of("tenant=mine", "region=us", "userId=42", "flag=true", "quote=it's \"q\" \\ \né", "rid={{$guid}}", "host={{baseHost}}"),
+                inside.locals.stream().map(k -> k.key + "=" + k.value).toList());
+        RequestDef mixed = r.collection().items.get(1).request;
+        assertEquals(List.of("tenant=acme", "region=eu", "a=1"), mixed.locals.stream().map(k -> k.key + "=" + k.value).toList(),
+                "only fixed values are read; expressions, other scopes and anything with code after it are not");
+        String notes = String.join("\n", r.notes());
+        assertTrue(notes.contains("1 script was left out"), "only the script with real code is reported: " + notes);
+        assertTrue(notes.contains("local variables that pre-request scripts set were added"), notes);
+        assertEquals("https://h/mine/us/42", new dev.restclient.vars.VariableResolver(null, null, null).withLocals(inside.locals).resolve(inside.url));
+    }
+
+    @Test
+    void localVariablesRoundTripThroughAPreRequestScript() throws Exception {
+        ApiCollection c = new ApiCollection();
+        c.name = "Locals";
+        RequestDef q = new RequestDef();
+        q.name = "Q";
+        q.url = "https://h/{{userId}}";
+        q.locals.add(new KeyValue("userId", "99"));
+        q.locals.add(new KeyValue("trace", "run-{{$timestamp}} \"x\" \\ it's"));
+        q.locals.add(new KeyValue("off", "x", false));
+        q.captures.add(new KeyValue("token", "body.token"));
+        c.items.add(CollectionNode.request(q));
+        String json = Postman.writeCollection(c);
+        assertTrue(json.contains("\"listen\": \"prerequest\"") && json.contains("\"listen\": \"test\""), json);
+        assertTrue(json.contains("pm.variables.set(\\\"userId\\\", \\\"99\\\");"), json);
+        assertTrue(json.contains("pm.variables.replaceIn("), "values with variables are resolved by Postman: " + json);
+        assertTrue(json.contains("// pm.variables.set(\\\"off\\\""), "switched-off rows are written commented out: " + json);
+        Postman.Result r = Postman.read(json);
+        RequestDef back = r.collection().items.get(0).request;
+        assertEquals(q.locals.subList(0, 2), back.locals);
+        assertEquals(q.captures, back.captures);
+        assertFalse(String.join("\n", r.notes()).contains("left out"), r.notes().toString());
+        assertEquals("a\"b", Postman.jsString("'a\\\"b'"));
+        assertTrue(Postman.jsString("\"a\" + \"b\"") == null && Postman.jsString("\"a\\x\"") == null && Postman.jsString("x") == null);
+    }
 }

@@ -30,6 +30,11 @@ public class RequestDef {
      * (see {@code dev.restclient.capture.Capture}).
      */
     public List<KeyValue> captures = new ArrayList<>();
+    /**
+     * Local variables: {{name}} values that apply to this request only and win over the environment, the
+     * collection and Globals.
+     */
+    public List<KeyValue> locals = new ArrayList<>();
     public Auth auth = new Auth();
     /** {@code null} = use the global default from Settings. */
     public Boolean insecure;
@@ -50,6 +55,7 @@ public class RequestDef {
         r.multipart = copyList(multipart);
         r.bodyFile = bodyFile;
         r.captures = copyList(captures);
+        r.locals = copyList(locals);
         r.auth = auth == null ? new Auth() : auth.copy();
         r.insecure = insecure;
         r.timeoutSeconds = timeoutSeconds;
@@ -87,7 +93,7 @@ public class RequestDef {
                 && Objects.equals(disabledParams, o.disabledParams) && Objects.equals(headers, o.headers)
                 && bodyType == o.bodyType && Objects.equals(body, o.body) && Objects.equals(form, o.form)
                 && Objects.equals(multipart, o.multipart) && Objects.equals(bodyFile == null ? "" : bodyFile, o.bodyFile == null ? "" : o.bodyFile)
-                && Objects.equals(captures, o.captures)
+                && Objects.equals(captures, o.captures) && Objects.equals(locals, o.locals)
                 && Objects.equals(auth, o.auth) && Objects.equals(insecure, o.insecure)
                 && timeoutSeconds == o.timeoutSeconds;
     }

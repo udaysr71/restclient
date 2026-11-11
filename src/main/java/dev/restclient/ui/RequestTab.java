@@ -80,6 +80,10 @@ public class RequestTab extends JPanel {
     private final KeyValueTable multipartTable;
     private final VarTextField bodyFile;
     private final KeyValueTable capturesTable;
+    private final KeyValueTable localsTable;
+    private final Ui.Segmented paramsView = new Ui.Segmented("Query", "Local variables");
+    private final CardLayout paramsCards = new CardLayout();
+    private final JPanel paramsCardPanel = new JPanel(paramsCards);
     /** The last response, so the Capture tab can suggest what's in it. */
     private ResponseData lastResponse;
     private final CardLayout bodyCards = new CardLayout();
@@ -124,6 +128,7 @@ public class RequestTab extends JPanel {
         capturesTable = new KeyValueTable(this::resolver, frame, "Variable name", "status, header.Name, body.data.token…",
                 text -> suggest(new ArrayList<>(resolver().names()), text), (key, text) -> captureSuggestions(text))
                 .titles("Save to variable", "From the response");
+        localsTable = new KeyValueTable(this::resolver, frame, "Variable name", "Value", null, null).titles("Variable", "Value");
         authUser = new VarTextField(this::resolver, frame, true).placeholder("Username");
         authPass = new VarTextField(this::resolver, frame, true).placeholder("Password");
         authToken = new VarTextField(this::resolver, frame, true).placeholder("Token, e.g. {{token}}");
@@ -244,7 +249,7 @@ public class RequestTab extends JPanel {
 
     private UnderlineTabs buildEditorTabs() {
         editorTabs.setBorder(Ui.pad(0, 14, 0, 14));
-        editorTabs.addTab("Params", pad(paramsTable));
+        editorTabs.addTab("Params", buildParams());
         editorTabs.addTab("Headers", pad(headersTable));
         editorTabs.addTab("Body", buildBody());
         editorTabs.addTab("Auth", buildAuth());
@@ -283,6 +288,40 @@ public class RequestTab extends JPanel {
         bodyCardPanel.add(buildBinary(), "binary");
         p.add(bodyCardPanel, BorderLayout.CENTER);
         return p;
+    }
+
+    /** Query parameters, and behind a switch the request's local variables. */
+    private JPanel buildParams() {
+        JPanel p = new JPanel(new BorderLayout(0, 8));
+        p.setBorder(Ui.pad(8, 14, 10, 14));
+        JPanel top = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        top.add(paramsView);
+        p.add(top, BorderLayout.NORTH);
+        JPanel locals = Ui.transparent(new BorderLayout(0, 8));
+        locals.add(localsTable, BorderLayout.CENTER);
+        locals.add(Ui.small("<html>Use these as <b>{{name}}</b> anywhere in this request. They apply to this request only and win over "
+                + "the environment, the collection and Globals. They're saved with the request.</html>"), BorderLayout.SOUTH);
+        paramsCardPanel.setOpaque(false);
+        paramsCardPanel.add(paramsTable, "query");
+        paramsCardPanel.add(locals, "locals");
+        p.add(paramsCardPanel, BorderLayout.CENTER);
+        paramsView.onChange(i -> paramsCards.show(paramsCardPanel, i == 1 ? "locals" : "query"));
+        return p;
+    }
+
+    /** Shows the local variable called {@code name}, if this request has one. */
+    boolean showLocal(String name) {
+        List<KeyValue> rows = localsTable.getRows();
+        for (int i = 0; i < rows.size(); i++) {
+            if (!rows.get(i).enabled || !name.equals(rows.get(i).key.trim())) continue;
+            editorTabs.setSelectedIndex(0);
+            paramsView.setSelectedIndex(1);
+            paramsCards.show(paramsCardPanel, "locals");
+            localsTable.table().changeSelection(i, 2, false, false);
+            localsTable.table().requestFocusInWindow();
+            return true;
+        }
+        return false;
     }
 
     private JPanel buildBinary() {
@@ -455,6 +494,7 @@ public class RequestTab extends JPanel {
             multipartTable.setRows(draft.multipart);
             bodyFile.setText(draft.bodyFile == null ? "" : draft.bodyFile);
             capturesTable.setRows(draft.captures);
+            localsTable.setRows(draft.locals);
             Auth a = draft.auth == null ? new Auth() : draft.auth;
             authType.setSelectedIndex(a.type.ordinal());
             authUser.setText(a.username);
@@ -513,6 +553,10 @@ public class RequestTab extends JPanel {
         formTable.onChange(this::changed);
         multipartTable.onChange(this::changed);
         capturesTable.onChange(this::changed);
+        localsTable.onChange(() -> {
+            changed();
+            refreshVariables(); // every {{name}} in the request may now resolve differently
+        });
         bodyFile.getDocument().addDocumentListener(docListener(this::changed));
         bodyEditor.getDocument().addDocumentListener(docListener(this::changed));
         bodyType.onChange(i -> {
@@ -641,6 +685,7 @@ public class RequestTab extends JPanel {
         draft.multipart = multipartTable.getRows();
         draft.bodyFile = bodyFile.getText();
         draft.captures = capturesTable.getRows();
+        draft.locals = localsTable.getRows();
         if (draft.auth == null) draft.auth = new Auth();
         draft.auth.type = Auth.Type.values()[Math.max(0, authType.getSelectedIndex())];
         draft.auth.username = authUser.getText();
@@ -658,7 +703,8 @@ public class RequestTab extends JPanel {
     private void updateState() {
         int params = 0;
         for (KeyValue kv : paramsTable.getRows()) if (kv.enabled) params++;
-        editorTabs.setTitleAt(0, params > 0 ? "Params " + params : "Params");
+        int locals = localsTable.enabledCount();
+        editorTabs.setTitleAt(0, (params > 0 ? "Params " + params : "Params") + (locals > 0 ? " · " + locals + " local" : ""));
         int headers = headersTable.enabledCount();
         editorTabs.setTitleAt(1, headers > 0 ? "Headers " + headers : "Headers");
         editorTabs.setTitleAt(2, draft.bodyType == BodyType.NONE ? "Body" : "Body · " + draft.bodyType.label);
@@ -845,7 +891,8 @@ public class RequestTab extends JPanel {
     }
 
     VariableResolver resolver() {
-        return ctx.resolverFor(collectionId);
+        VariableResolver r = ctx.resolverFor(collectionId);
+        return localsTable == null ? r : r.withLocals(localsTable.getRows());
     }
 
     public void copyAsCurl(boolean resolved) {
@@ -878,6 +925,7 @@ public class RequestTab extends JPanel {
         formTable.stopEditing();
         multipartTable.stopEditing();
         capturesTable.stopEditing();
+        localsTable.stopEditing();
         readUi();
         // recording: {{$guid}} and friends get their values here, and the copy kept for display reuses them
         VariableResolver vars = resolver().recording();

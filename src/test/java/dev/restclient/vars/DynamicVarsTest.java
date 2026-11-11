@@ -74,4 +74,28 @@ class DynamicVarsTest {
         }
         assertTrue(DynamicVars.describe("$nope") == null);
     }
+
+    @Test
+    void aRequestsLocalVariablesWinOverEveryOtherScope() {
+        Environment e = new Environment();
+        e.name = "Staging";
+        e.variables.add(new Variable("userId", "7"));
+        e.variables.add(new Variable("host", "api.example.com"));
+        VariableResolver base = new VariableResolver(e, null, null);
+        java.util.List<dev.restclient.model.KeyValue> locals = java.util.List.of(
+                new dev.restclient.model.KeyValue("userId", "99"), new dev.restclient.model.KeyValue("page", "{{userId}}-{{host}}"),
+                new dev.restclient.model.KeyValue("off", "x", false), new dev.restclient.model.KeyValue("bad name", "x"),
+                new dev.restclient.model.KeyValue("$guid", "fixed"));
+        VariableResolver r = base.withLocals(locals);
+        assertEquals("99", r.resolve("{{userId}}"));
+        assertEquals(VariableResolver.Scope.REQUEST, r.lookup("userId").orElseThrow().scope());
+        assertEquals(2, r.lookupAll("userId").size(), "the environment's value is still there, overridden");
+        assertEquals("99-api.example.com", r.resolve("{{page}}"), "locals can use other variables");
+        assertFalse(r.isDefined("off") || r.isDefined("bad name"), "switched-off rows and impossible names are ignored");
+        assertFalse(r.resolve("{{$guid}}").equals("fixed"), "built-ins can't be overridden");
+        assertTrue(r.names().contains("page"));
+        assertEquals("7", base.resolve("{{userId}}"), "the original resolver is untouched");
+        assertTrue(base.withLocals(java.util.List.of()) == base);
+        assertEquals("99", r.recording().replaying().resolve("{{userId}}"), "copies keep the locals");
+    }
 }

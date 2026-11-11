@@ -97,6 +97,7 @@ public final class Postman {
         int files;
         int examples;
         int captures;
+        int locals;
         final Set<String> unknownDynamic = new LinkedHashSet<>();
         final Map<String, Integer> unsupportedAuth = new LinkedHashMap<>();
 
@@ -108,6 +109,7 @@ public final class Postman {
             List<String> out = new ArrayList<>();
             if (scripts > 0) out.add("Pre-request and test scripts aren't supported; " + scripts + " " + plural(scripts, "script was", "scripts were") + " left out.");
             if (files > 0) out.add(files + " " + plural(files, "request uploads a file", "requests upload files") + " from this computer. The paths come from the imported file: check them in the Body tab before sending.");
+            if (locals > 0) out.add(locals + " local " + plural(locals, "variable that a pre-request script set was", "variables that pre-request scripts set were") + " added to the requests' Local variables (pm.variables.set with a fixed value). They're under Params › Local variables.");
             if (captures > 0) out.add(captures + " " + plural(captures, "value that a test script saved was", "values that test scripts saved were") + " turned into " + plural(captures, "a Capture rule", "Capture rules") + " (pm.environment.set and similar). Check them in the Capture tab.");
             if (!unknownDynamic.isEmpty()) out.add("These built-in Postman variables aren't supported and are sent as written: " + String.join(", ", unknownDynamic) + ".");
             if (examples > 0) out.add(examples + " saved " + plural(examples, "example response was", "example responses were") + " left out.");
@@ -137,12 +139,13 @@ public final class Postman {
             c.variables.add(var);
         }
         Auth collectionAuth = auth(m.get("auth"), r, null);
-        if (list(m.get("event")).size() > 0) r.scripts += countScripts(m.get("event"));
-        c.items.addAll(items(list(m.get("item")), collectionAuth, r));
+        List<KeyValue> collectionLocals = new ArrayList<>();
+        r.scripts += scopeScripts(m.get("event"), collectionLocals, r);
+        c.items.addAll(items(list(m.get("item")), collectionAuth, collectionLocals, r));
         return new Result(c, null, false, r.requests, r.folders, r.finish());
     }
 
-    private static List<CollectionNode> items(List<?> items, Auth inherited, Reader r) {
+    private static List<CollectionNode> items(List<?> items, Auth inherited, List<KeyValue> inheritedLocals, Reader r) {
         List<CollectionNode> out = new ArrayList<>();
         for (Object o : items) {
             if (!(o instanceof Map<?, ?> it)) continue;
@@ -150,13 +153,17 @@ public final class Postman {
                 r.folders++;
                 CollectionNode f = CollectionNode.folder(cleanName(str(it.get("name")), "Folder"));
                 Auth folderAuth = it.containsKey("auth") ? auth(it.get("auth"), r, inherited) : inherited;
-                r.scripts += countScripts(it.get("event"));
-                f.children.addAll(items(children, folderAuth, r));
+                // a folder's pre-request script runs before every request in it, so its local variables are theirs too
+                List<KeyValue> folderLocals = new ArrayList<>();
+                for (KeyValue kv : inheritedLocals) folderLocals.add(kv.copy()); // its own copies: a folder's values stay in the folder
+                r.scripts += scopeScripts(it.get("event"), folderLocals, r);
+                f.children.addAll(items(children, folderAuth, folderLocals, r));
                 out.add(f);
             } else if (it.containsKey("request")) {
                 r.requests++;
                 r.examples += list(it.get("response")).size();
                 RequestDef req = request(it.get("request"), inherited, r);
+                for (KeyValue kv : inheritedLocals) putLocal(req.locals, kv.key, kv.value);
                 r.scripts += requestScripts(it.get("event"), req, r);
                 req.name = cleanName(str(it.get("name")), req.url.isEmpty() ? "Request" : req.url);
                 if (it.get("protocolProfileBehavior") instanceof Map<?, ?> ppb && Boolean.FALSE.equals(ppb.get("strictSSL"))) {
@@ -452,7 +459,15 @@ public final class Postman {
             if (exec instanceof List<?> l) for (Object x : l) lines.addAll(List.of(str(x).split("\\r?\\n")));
             else if (exec instanceof String str) lines.addAll(List.of(str.split("\\r?\\n")));
             if (lines.stream().allMatch(String::isBlank)) continue;
-            if (!"test".equals(str(em.get("listen"))) || lines.size() > 2000) {
+            if (lines.size() > 2000) {
+                left++;
+                continue;
+            }
+            if ("prerequest".equals(str(em.get("listen")))) {
+                if (!localsFrom(lines, req.locals, r)) left++;
+                continue;
+            }
+            if (!"test".equals(str(em.get("listen")))) {
                 left++;
                 continue;
             }
@@ -460,7 +475,11 @@ public final class Postman {
             java.util.Set<String> aliases = new java.util.HashSet<>();
             for (String raw : lines) {
                 String line = raw.strip();
-                if (line.isEmpty() || line.startsWith("//") || line.length() > 2000) continue;
+                if (line.isEmpty() || line.startsWith("//")) continue;
+                if (line.length() > 2000) {
+                    all = false;
+                    continue;
+                }
                 Matcher alias = JS_ALIAS.matcher(line);
                 if (alias.matches()) {
                     aliases.add(alias.group(1));
@@ -479,6 +498,136 @@ public final class Postman {
             if (!all) left++;
         }
         return left;
+    }
+
+    private static final Pattern JS_LOCAL = Pattern.compile("pm\\.variables\\.set\\(\\s*(\"[^\"\\\\]*\"|'[^'\\\\]*')\\s*,\\s*(.+?)\\s*\\)\\s*;?");
+    private static final Pattern JS_GET = Pattern.compile(
+            "pm\\.(?:variables|environment|globals|collectionVariables)\\.get\\(\\s*(\"[^\"\\\\]*\"|'[^'\\\\]*')\\s*\\)");
+    private static final Pattern JS_REPLACE_IN = Pattern.compile("pm\\.variables\\.replaceIn\\(\\s*(.+?)\\s*\\)");
+
+    /**
+     * A folder's or the collection's scripts. A pre-request script that only sets local variables to fixed values
+     * is turned into local variables for the requests beneath; any other script is counted as left out.
+     */
+    private static int scopeScripts(Object events, List<KeyValue> locals, Reader r) {
+        int left = 0;
+        for (Object e : list(events)) {
+            if (!(e instanceof Map<?, ?> em) || !(em.get("script") instanceof Map<?, ?> sc)) continue;
+            Object exec = sc.get("exec");
+            List<String> lines = new ArrayList<>();
+            if (exec instanceof List<?> l) for (Object x : l) lines.addAll(List.of(str(x).split("\\r?\\n")));
+            else if (exec instanceof String str) lines.addAll(List.of(str.split("\\r?\\n")));
+            if (lines.stream().allMatch(String::isBlank)) continue;
+            if (!"prerequest".equals(str(em.get("listen"))) || lines.size() > 2000 || !localsFrom(lines, locals, r)) left++;
+        }
+        return left;
+    }
+
+    /**
+     * Reads the lines of a pre-request script that set a local variable to a fixed value:
+     * {@code pm.variables.set("name", "text")}, a number, true/false, {@code pm.variables.replaceIn("{{$guid}}")}
+     * or another variable ({@code pm.environment.get("host")}). Nothing is run. Returns true when the whole
+     * script was such lines (and comments), so nothing of it is lost.
+     */
+    private static boolean localsFrom(List<String> lines, List<KeyValue> locals, Reader r) {
+        boolean all = true;
+        for (String raw : lines) {
+            String line = raw.strip();
+            if (line.isEmpty() || line.startsWith("//")) continue;
+            Matcher m = line.length() > 4000 ? null : JS_LOCAL.matcher(line);
+            String name = m != null && m.matches() ? m.group(1).substring(1, m.group(1).length() - 1) : null;
+            String value = name == null ? null : localValue(m.group(2));
+            if (value != null && dev.restclient.capture.Capture.validName(name) && locals.size() < 200) {
+                putLocal(locals, name, value);
+                r.locals++;
+            } else {
+                all = false;
+            }
+        }
+        return all;
+    }
+
+    private static void putLocal(List<KeyValue> locals, String name, String value) {
+        for (KeyValue kv : locals) {
+            if (kv.key.equals(name)) { // a later line, or a request's own script, wins
+                kv.value = value;
+                return;
+            }
+        }
+        locals.add(new KeyValue(name, value));
+    }
+
+    /** The text a local variable gets from a JavaScript expression, or null if the expression isn't a fixed value. */
+    private static String localValue(String expr) {
+        String e = expr.strip();
+        if (e.matches("-?\\d{1,18}(\\.\\d{1,18})?|true|false")) return e;
+        Matcher get = JS_GET.matcher(e);
+        if (get.matches()) {
+            String name = get.group(1).substring(1, get.group(1).length() - 1);
+            return dev.restclient.capture.Capture.validName(name) || dev.restclient.vars.DynamicVars.isDynamic(name) ? "{{" + name + "}}" : null;
+        }
+        Matcher in = JS_REPLACE_IN.matcher(e);
+        if (in.matches()) e = in.group(1).strip(); // our variables resolve inside values anyway
+        return jsString(e);
+    }
+
+    /** Reads a whole single- or double-quoted JavaScript string literal; null for anything else. */
+    static String jsString(String lit) {
+        if (lit.length() < 2) return null;
+        char q = lit.charAt(0);
+        if ((q != '"' && q != '\'') || lit.charAt(lit.length() - 1) != q) return null;
+        StringBuilder out = new StringBuilder();
+        for (int i = 1; i < lit.length() - 1; i++) {
+            char c = lit.charAt(i);
+            if (c == q) return null; // the literal ends early: this is an expression, not one string
+            if (c != '\\') {
+                out.append(c);
+                continue;
+            }
+            if (++i >= lit.length() - 1) return null;
+            char x = lit.charAt(i);
+            switch (x) {
+                case 'n' -> out.append('\n');
+                case 't' -> out.append('\t');
+                case 'r' -> out.append('\r');
+                case 'b' -> out.append('\b');
+                case 'f' -> out.append('\f');
+                case '\\', '"', '\'', '/', '`' -> out.append(x);
+                case 'u' -> {
+                    if (i + 4 >= lit.length() || !lit.substring(i + 1, i + 5).matches("[0-9a-fA-F]{4}")) return null;
+                    out.append((char) Integer.parseInt(lit.substring(i + 1, i + 5), 16));
+                    i += 4;
+                }
+                default -> {
+                    return null;
+                }
+            }
+        }
+        return out.toString();
+    }
+
+    /** One line per local variable, in the shape {@link #localsFrom} reads back. Every value is a string literal. */
+    private static List<Object> localsScript(List<KeyValue> locals) {
+        List<Object> lines = new ArrayList<>();
+        for (KeyValue kv : locals) {
+            if (kv.key == null || !dev.restclient.capture.Capture.validName(kv.key.trim())) continue;
+            StringBuilder lit = new StringBuilder();
+            Json.quote(lit, kv.value == null ? "" : kv.value);
+            // replaceIn makes Postman fill in {{variables}} inside the value, as this app does
+            String value = kv.value != null && kv.value.contains("{{") ? "pm.variables.replaceIn(" + lit + ")" : lit.toString();
+            lines.add((kv.enabled ? "" : "// ") + "pm.variables.set(" + js(kv.key.trim()) + ", " + value + ");");
+        }
+        return lines;
+    }
+
+    private static Map<String, Object> event(String listen, List<Object> lines) {
+        Map<String, Object> sc = new LinkedHashMap<>();
+        sc.put("type", "text/javascript");
+        sc.put("exec", lines);
+        Map<String, Object> ev = new LinkedHashMap<>();
+        ev.put("listen", listen);
+        ev.put("script", sc);
+        return ev;
     }
 
     /** The Capture source for a JavaScript expression a test script saves, or null if it isn't one we know. */
@@ -611,16 +760,12 @@ public final class Postman {
             } else if (n.request != null) {
                 RequestDef r = n.request;
                 if (Boolean.TRUE.equals(r.insecure)) it.put("protocolProfileBehavior", Map.of("strictSSL", false));
+                List<Object> events = new ArrayList<>();
+                List<Object> pre = localsScript(r.locals);
+                if (!pre.isEmpty()) events.add(event("prerequest", pre)); // Postman's locals are set by a script
                 List<Object> script = captureScript(r.captures);
-                if (!script.isEmpty()) {
-                    Map<String, Object> sc = new LinkedHashMap<>();
-                    sc.put("type", "text/javascript");
-                    sc.put("exec", script);
-                    Map<String, Object> ev = new LinkedHashMap<>();
-                    ev.put("listen", "test");
-                    ev.put("script", sc);
-                    it.put("event", List.of(ev));
-                }
+                if (!script.isEmpty()) events.add(event("test", script));
+                if (!events.isEmpty()) it.put("event", events);
                 it.put("request", writeRequest(r));
                 it.put("response", List.of());
             } else {

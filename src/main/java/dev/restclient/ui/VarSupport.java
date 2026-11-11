@@ -487,7 +487,8 @@ public final class VarSupport {
             box.add(buttons);
         } else {
             VariableResolver.Resolution win = all.get(0);
-            String scope = win.scope() == VariableResolver.Scope.ENVIRONMENT
+            String scope = win.scope() == VariableResolver.Scope.REQUEST ? "This request · local"
+                    : win.scope() == VariableResolver.Scope.ENVIRONMENT
                     ? win.sourceName() + " · environment" : win.scope() == VariableResolver.Scope.COLLECTION
                     ? win.sourceName() + " · collection" : "Globals";
             head.add(new Ui.Pill(scope, Theme::okBg, Theme::okFg), BorderLayout.EAST);
@@ -513,7 +514,8 @@ public final class VarSupport {
                 box.add(ov);
             }
             box.add(Ui.vgap(10));
-            String editLabel = win.scope() == VariableResolver.Scope.GLOBAL ? "Edit in Globals" : "Edit in " + win.sourceName();
+            String editLabel = win.scope() == VariableResolver.Scope.GLOBAL ? "Edit in Globals"
+                    : win.scope() == VariableResolver.Scope.REQUEST ? "Edit in This Request" : "Edit in " + win.sourceName();
             JButton edit = Ui.button(editLabel, e -> {
                 hideNow();
                 if (actions != null) actions.editVariable(name);
