@@ -20,6 +20,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Postman Collection (v2.0 and v2.1) and Postman environment files, in both directions.
@@ -94,6 +96,8 @@ public final class Postman {
         int scripts;
         int files;
         int examples;
+        int captures;
+        final Set<String> unknownDynamic = new LinkedHashSet<>();
         final Map<String, Integer> unsupportedAuth = new LinkedHashMap<>();
 
         void note(String s) {
@@ -103,7 +107,9 @@ public final class Postman {
         List<String> finish() {
             List<String> out = new ArrayList<>();
             if (scripts > 0) out.add("Pre-request and test scripts aren't supported; " + scripts + " " + plural(scripts, "script was", "scripts were") + " left out.");
-            if (files > 0) out.add(files + " file " + plural(files, "upload", "uploads") + " (form-data files or binary bodies) couldn't be imported; the requests are there without them.");
+            if (files > 0) out.add(files + " " + plural(files, "request uploads a file", "requests upload files") + " from this computer. The paths come from the imported file: check them in the Body tab before sending.");
+            if (captures > 0) out.add(captures + " " + plural(captures, "value that a test script saved was", "values that test scripts saved were") + " turned into " + plural(captures, "a Capture rule", "Capture rules") + " (pm.environment.set and similar). Check them in the Capture tab.");
+            if (!unknownDynamic.isEmpty()) out.add("These built-in Postman variables aren't supported and are sent as written: " + String.join(", ", unknownDynamic) + ".");
             if (examples > 0) out.add(examples + " saved " + plural(examples, "example response was", "example responses were") + " left out.");
             unsupportedAuth.forEach((type, n) -> out.add("“" + type + "” auth isn't supported (" + n + " " + plural(n, "request", "requests") + "); set it up by hand in the Auth or Headers tab."));
             out.addAll(notes);
@@ -149,9 +155,9 @@ public final class Postman {
                 out.add(f);
             } else if (it.containsKey("request")) {
                 r.requests++;
-                r.scripts += countScripts(it.get("event"));
                 r.examples += list(it.get("response")).size();
                 RequestDef req = request(it.get("request"), inherited, r);
+                r.scripts += requestScripts(it.get("event"), req, r);
                 req.name = cleanName(str(it.get("name")), req.url.isEmpty() ? "Request" : req.url);
                 if (it.get("protocolProfileBehavior") instanceof Map<?, ?> ppb && Boolean.FALSE.equals(ppb.get("strictSSL"))) {
                     req.insecure = Boolean.TRUE;
@@ -186,7 +192,17 @@ public final class Postman {
         body(m.get("body"), d, r);
         Auth a = m.containsKey("auth") ? auth(m.get("auth"), r, inherited) : inherited;
         applyAuth(a, d);
-        if (d.url.contains("{{$")) r.note("Postman's dynamic variables such as {{$guid}} and {{$timestamp}} aren't supported; they're sent as written.");
+        List<String> texts = new ArrayList<>(List.of(d.url, d.body == null ? "" : d.body));
+        for (KeyValue h : d.headers) texts.add(h.value);
+        for (KeyValue f : d.form) texts.add(f.value);
+        for (KeyValue f : d.multipart) texts.add(f.value);
+        for (String t : texts) {
+            for (dev.restclient.vars.VariableResolver.Token tok : dev.restclient.vars.VariableResolver.tokens(t)) {
+                if (tok.name().startsWith("$") && !dev.restclient.vars.DynamicVars.isDynamic(tok.name()) && r.unknownDynamic.size() < 20) {
+                    r.unknownDynamic.add("{{" + tok.name() + "}}");
+                }
+            }
+        }
         return d;
     }
 
@@ -278,17 +294,21 @@ public final class Postman {
                 }
             }
             case "formdata" -> {
-                // multipart isn't supported; text fields become a urlencoded form, files are reported
-                d.bodyType = BodyType.FORM;
+                d.bodyType = BodyType.MULTIPART;
+                boolean uploads = false;
                 for (Object p : list(b.get("formdata"))) {
                     if (!(p instanceof Map<?, ?> pm) || str(pm.get("key")).isEmpty()) continue;
                     if ("file".equals(str(pm.get("type")))) {
-                        r.files++;
-                        continue;
+                        // src is a path, or a list of paths for several files under one name
+                        List<?> srcs = pm.get("src") instanceof List<?> l ? l : pm.get("src") == null ? List.of("") : List.of(pm.get("src"));
+                        if (srcs.isEmpty()) srcs = List.of("");
+                        for (Object src : srcs) d.multipart.add(KeyValue.file(str(pm.get("key")), str(src), !bool(pm.get("disabled"))));
+                        uploads = true;
+                    } else {
+                        d.multipart.add(new KeyValue(str(pm.get("key")), valueString(pm.get("value")), !bool(pm.get("disabled"))));
                     }
-                    d.form.add(new KeyValue(str(pm.get("key")), valueString(pm.get("value")), !bool(pm.get("disabled"))));
                 }
-                r.note("Multipart form-data bodies were imported as URL-encoded forms (the server may expect multipart).");
+                if (uploads) r.files++;
             }
             case "graphql" -> {
                 // a GraphQL request is a JSON POST of {"query", "variables"}
@@ -307,7 +327,11 @@ public final class Postman {
                     d.bodyType = BodyType.JSON;
                 }
             }
-            case "file" -> r.files++;
+            case "file" -> {
+                d.bodyType = BodyType.BINARY;
+                d.bodyFile = b.get("file") instanceof Map<?, ?> fm ? str(fm.get("src")) : "";
+                r.files++;
+            }
             default -> {
             }
         }
@@ -401,6 +425,130 @@ public final class Postman {
         return out;
     }
 
+    private static final String JS_PATH = "((?:\\.[A-Za-z_$][\\w$]*|\\[\\d+\\]|\\.at\\(-?\\d+\\)|\\[\"[^\"\\\\]*\"\\]|\\['[^'\\\\]*'\\])*)";
+    private static final Pattern JS_ALIAS = Pattern.compile(
+            "(?:var|let|const)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*(?:pm\\.response\\.json\\(\\)|JSON\\.parse\\(\\s*responseBody\\s*\\))\\s*;?");
+    private static final Pattern JS_SET = Pattern.compile(
+            "(?:pm\\.(?:environment|globals|collectionVariables|variables)\\.set|postman\\.set(?:Environment|Global)Variable)"
+                    + "\\(\\s*(?:\"([^\"\\\\]*)\"|'([^'\\\\]*)')\\s*,\\s*(.+?)\\s*\\)\\s*;?");
+    private static final Pattern JS_HEADER = Pattern.compile(
+            "pm\\.response\\.headers\\.get\\(\\s*(?:\"([^\"\\\\]*)\"|'([^'\\\\]*)')\\s*\\)");
+    private static final Pattern JS_COOKIE = Pattern.compile(
+            "pm\\.cookies\\.get\\(\\s*(?:\"([^\"\\\\]*)\"|'([^'\\\\]*)')\\s*\\)");
+    private static final Pattern JS_SEGMENT = Pattern.compile(
+            "\\.at\\((-?\\d+)\\)|\\.([A-Za-z_$][\\w$]*)|\\[(\\d+)\\]|\\[\"([^\"\\\\]*)\"\\]|\\['([^'\\\\]*)'\\]");
+
+    /**
+     * Counts a request's scripts that are left out. A test script is never run; the one thing read out of it is
+     * the common "save a value from the response" line (pm.environment.set("token", pm.response.json().token)),
+     * which becomes a Capture rule. A test script made only of such lines isn't counted as left out.
+     */
+    private static int requestScripts(Object events, RequestDef req, Reader r) {
+        int left = 0;
+        for (Object e : list(events)) {
+            if (!(e instanceof Map<?, ?> em) || !(em.get("script") instanceof Map<?, ?> sc)) continue;
+            Object exec = sc.get("exec");
+            List<String> lines = new ArrayList<>();
+            if (exec instanceof List<?> l) for (Object x : l) lines.addAll(List.of(str(x).split("\\r?\\n")));
+            else if (exec instanceof String str) lines.addAll(List.of(str.split("\\r?\\n")));
+            if (lines.stream().allMatch(String::isBlank)) continue;
+            if (!"test".equals(str(em.get("listen"))) || lines.size() > 2000) {
+                left++;
+                continue;
+            }
+            boolean all = true;
+            java.util.Set<String> aliases = new java.util.HashSet<>();
+            for (String raw : lines) {
+                String line = raw.strip();
+                if (line.isEmpty() || line.startsWith("//") || line.length() > 2000) continue;
+                Matcher alias = JS_ALIAS.matcher(line);
+                if (alias.matches()) {
+                    aliases.add(alias.group(1));
+                    continue;
+                }
+                Matcher set = JS_SET.matcher(line);
+                String source = set.matches() ? captureSource(set.group(3), aliases) : null;
+                String name = set.matches() ? (set.group(1) != null ? set.group(1) : set.group(2)) : null;
+                if (source != null && dev.restclient.capture.Capture.validName(name) && req.captures.size() < 200) {
+                    req.captures.add(new KeyValue(name, source));
+                    r.captures++;
+                } else {
+                    all = false;
+                }
+            }
+            if (!all) left++;
+        }
+        return left;
+    }
+
+    /** The Capture source for a JavaScript expression a test script saves, or null if it isn't one we know. */
+    private static String captureSource(String expr, java.util.Set<String> aliases) {
+        String e = expr.strip();
+        Matcher wrapped = Pattern.compile("String\\((.*)\\)").matcher(e);
+        if (wrapped.matches()) e = wrapped.group(1).strip();
+        if (e.equals("pm.response.code") || e.equals("responseCode.code")) return "status";
+        if (e.equals("pm.response.text()") || e.equals("responseBody")) return "body";
+        Matcher h = JS_HEADER.matcher(e);
+        if (h.matches()) return "header." + (h.group(1) != null ? h.group(1) : h.group(2));
+        Matcher c = JS_COOKIE.matcher(e);
+        if (c.matches()) return "cookie." + (c.group(1) != null ? c.group(1) : c.group(2));
+        String rest = null;
+        if (e.startsWith("pm.response.json()")) {
+            rest = e.substring("pm.response.json()".length());
+        } else {
+            Matcher id = Pattern.compile("([A-Za-z_$][\\w$]*)(.*)").matcher(e);
+            if (id.matches() && aliases.contains(id.group(1))) rest = id.group(2);
+        }
+        if (rest == null || rest.isEmpty() || !rest.matches(JS_PATH)) return null;
+        List<Object> path = new ArrayList<>();
+        Matcher seg = JS_SEGMENT.matcher(rest);
+        while (seg.find()) {
+            try {
+                if (seg.group(1) != null) path.add(Integer.parseInt(seg.group(1)));
+                else if (seg.group(2) != null) path.add(seg.group(2));
+                else if (seg.group(3) != null) path.add(Integer.parseInt(seg.group(3)));
+                else path.add(seg.group(4) != null ? seg.group(4) : seg.group(5));
+            } catch (NumberFormatException ex) {
+                return null;
+            }
+        }
+        for (Object o : path) if (o instanceof String k && (k.isEmpty() || k.contains("\"") || k.contains("]"))) return null;
+        return dev.restclient.capture.Capture.pathSource(path);
+    }
+
+    /** One line of JavaScript per rule, in the shape {@link #requestScripts} reads back. Every value is a literal. */
+    private static List<Object> captureScript(List<KeyValue> captures) {
+        List<Object> lines = new ArrayList<>();
+        for (KeyValue c : captures) {
+            if (c.key == null || !dev.restclient.capture.Capture.validName(c.key.trim())) continue;
+            String src = c.value == null ? "" : c.value.trim();
+            String lower = src.toLowerCase(Locale.ROOT);
+            String expr;
+            if (lower.equals("status")) expr = "String(pm.response.code)";
+            else if (lower.equals("body")) expr = "pm.response.text()";
+            else if (lower.matches("header[.:].+")) expr = "pm.response.headers.get(" + js(src.substring(7).trim()) + ")";
+            else if (lower.matches("cookie[.:].+")) expr = "pm.cookies.get(" + js(src.substring(7).trim()) + ")";
+            else {
+                List<Object> path = dev.restclient.capture.Capture.jsonPath(src);
+                if (path == null) continue;
+                StringBuilder sb = new StringBuilder("pm.response.json()");
+                for (Object seg : path) {
+                    if (seg instanceof Integer i) sb.append(i < 0 ? ".at(" + i + ")" : "[" + i + "]");
+                    else sb.append('[').append(js((String) seg)).append(']');
+                }
+                expr = sb.toString();
+            }
+            lines.add((c.enabled ? "" : "// ") + "pm.environment.set(" + js(c.key.trim()) + ", " + expr + ");");
+        }
+        return lines;
+    }
+
+    private static String js(String s) {
+        StringBuilder sb = new StringBuilder();
+        Json.quote(sb, s.replace("\\", "").replace("\"", "")); // the reader takes neither inside a literal
+        return sb.toString();
+    }
+
     private static int countScripts(Object events) {
         int n = 0;
         for (Object e : list(events)) {
@@ -463,6 +611,16 @@ public final class Postman {
             } else if (n.request != null) {
                 RequestDef r = n.request;
                 if (Boolean.TRUE.equals(r.insecure)) it.put("protocolProfileBehavior", Map.of("strictSSL", false));
+                List<Object> script = captureScript(r.captures);
+                if (!script.isEmpty()) {
+                    Map<String, Object> sc = new LinkedHashMap<>();
+                    sc.put("type", "text/javascript");
+                    sc.put("exec", script);
+                    Map<String, Object> ev = new LinkedHashMap<>();
+                    ev.put("listen", "test");
+                    ev.put("script", sc);
+                    it.put("event", List.of(ev));
+                }
                 it.put("request", writeRequest(r));
                 it.put("response", List.of());
             } else {
@@ -510,6 +668,28 @@ public final class Postman {
                 List<Object> items = new ArrayList<>();
                 for (KeyValue kv : r.form) if (!kv.key.isEmpty()) items.add(kv(kv, "text"));
                 b.put("urlencoded", items);
+            }
+            case MULTIPART -> {
+                b.put("mode", "formdata");
+                List<Object> items = new ArrayList<>();
+                for (KeyValue kv : r.multipart) {
+                    if (kv.key.isEmpty()) continue;
+                    if (!kv.file) {
+                        items.add(kv(kv, "text"));
+                        continue;
+                    }
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("key", kv.key);
+                    m.put("type", "file");
+                    m.put("src", kv.value);
+                    if (!kv.enabled) m.put("disabled", true);
+                    items.add(m);
+                }
+                b.put("formdata", items);
+            }
+            case BINARY -> {
+                b.put("mode", "file");
+                b.put("file", Map.of("src", r.bodyFile == null ? "" : r.bodyFile));
             }
             default -> {
                 b.put("mode", "raw");
@@ -633,7 +813,7 @@ public final class Postman {
      * Names from a file: control characters removed, at most 200 characters, and never starting with "<html"
      * (which would make Swing render it as HTML, and HTML can load remote images).
      */
-    static String cleanName(String raw, String fallback) {
+    public static String cleanName(String raw, String fallback) {
         StringBuilder b = new StringBuilder();
         for (int i = 0; i < raw.length() && b.length() < MAX_NAME; ) {
             int cp = raw.codePointAt(i);

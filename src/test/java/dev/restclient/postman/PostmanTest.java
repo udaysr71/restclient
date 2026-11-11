@@ -148,8 +148,11 @@ class PostmanTest {
         assertEquals(Auth.Type.NONE, req(c, "Public ping").auth.type, "noauth beats inherited auth");
 
         RequestDef upload = req(c, "Upload");
-        assertEquals(BodyType.FORM, upload.bodyType);
-        assertEquals(1, upload.form.size(), "text field kept, file left out");
+        assertEquals(BodyType.MULTIPART, upload.bodyType);
+        assertEquals(2, upload.multipart.size(), "text field and file part");
+        assertFalse(upload.multipart.get(0).file);
+        assertTrue(upload.multipart.get(1).file, "file part");
+        assertEquals("/tmp/a.png", upload.multipart.get(1).value);
 
         RequestDef login = req(c, "Login form");
         assertEquals(BodyType.FORM, login.bodyType);
@@ -169,10 +172,10 @@ class PostmanTest {
 
         String notes = String.join("\n", r.notes());
         assertTrue(notes.contains("2 scripts were left out"), notes);
-        assertTrue(notes.contains("1 file upload"), notes);
+        assertTrue(notes.contains("1 request uploads a file from this computer"), notes);
         assertTrue(notes.contains("1 saved example response"), notes);
         assertTrue(notes.contains("“oauth2” auth isn't supported"), notes);
-        assertTrue(notes.contains("Multipart"), notes);
+        assertFalse(notes.contains("Multipart"), notes);
     }
 
     @Test
@@ -374,5 +377,80 @@ class PostmanTest {
     void fileNames() {
         assertEquals("shop-api.postman_collection.json", Postman.fileName("Shop API!", "collection"));
         assertEquals("export.postman_environment.json", Postman.fileName("✓✓", "environment"));
+    }
+
+    @Test
+    void uploadsCapturesAndDynamicVariablesRoundTrip() throws Exception {
+        ApiCollection c = new ApiCollection();
+        c.name = "Uploads";
+        RequestDef up = new RequestDef();
+        up.name = "Upload";
+        up.method = HttpMethod.POST;
+        up.url = "https://h/up?id={{$guid}}";
+        up.bodyType = BodyType.MULTIPART;
+        up.multipart.add(new KeyValue("note", "hi"));
+        up.multipart.add(KeyValue.file("file", "/tmp/a.png", true));
+        up.multipart.add(KeyValue.file("off", "/tmp/b.png", false));
+        up.captures.add(new KeyValue("token", "body.data.token"));
+        up.captures.add(new KeyValue("first", "$.items[0][\"odd name\"]"));
+        up.captures.add(new KeyValue("last", "items[-1].id"));
+        up.captures.add(new KeyValue("code", "status"));
+        up.captures.add(new KeyValue("where", "header.Location"));
+        up.captures.add(new KeyValue("sid", "cookie.session"));
+        up.captures.add(new KeyValue("all", "body"));
+        RequestDef bin = new RequestDef();
+        bin.name = "Binary";
+        bin.method = HttpMethod.PUT;
+        bin.url = "https://h/bin";
+        bin.bodyType = BodyType.BINARY;
+        bin.bodyFile = "/tmp/data.bin";
+        c.items.add(CollectionNode.request(up));
+        c.items.add(CollectionNode.request(bin));
+
+        String json = Postman.writeCollection(c);
+        assertTrue(json.contains("pm.environment.set(\\\"token\\\", pm.response.json()[\\\"data\\\"][\\\"token\\\"]);"), json);
+        Postman.Result r = Postman.read(json);
+        RequestDef up2 = r.collection().items.get(0).request;
+        assertEquals(BodyType.MULTIPART, up2.bodyType);
+        assertEquals(up.multipart, up2.multipart);
+        assertEquals(List.of("body.data.token", "body.items[0][\"odd name\"]", "body.items[-1].id", "status", "header.Location", "cookie.session", "body"),
+                up2.captures.stream().map(k -> k.value).toList());
+        assertEquals(List.of("token", "first", "last", "code", "where", "sid", "all"), up2.captures.stream().map(k -> k.key).toList());
+        RequestDef bin2 = r.collection().items.get(1).request;
+        assertEquals(BodyType.BINARY, bin2.bodyType);
+        assertEquals("/tmp/data.bin", bin2.bodyFile);
+        String notes = String.join("\n", r.notes());
+        assertTrue(notes.contains("2 requests upload files from this computer"), notes);
+        assertTrue(notes.contains("7 values that test scripts saved were turned into Capture rules"), notes);
+        assertFalse(notes.contains("left out"), "a script made only of saves isn't reported as dropped: " + notes);
+        assertFalse(notes.contains("built-in Postman variables"), "{{$guid}} is supported: " + notes);
+    }
+
+    @Test
+    void readsTheUsualWaysTestScriptsSaveValues() throws Exception {
+        String json = """
+                {"info": {"name": "S", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+                 "item": [{"name": "Login", "event": [{"listen": "test", "script": {"exec": [
+                     "// save the token",
+                     "var jsonData = pm.response.json();",
+                     "const data = JSON.parse(responseBody)",
+                     "pm.environment.set('token', jsonData.access_token);",
+                     "pm.globals.set(\\\"uid\\\", data.user.id)",
+                     "pm.collectionVariables.set(\\\"loc\\\", pm.response.headers.get('Location'));",
+                     "postman.setEnvironmentVariable(\\\"first\\\", jsonData.items[0]['id']);",
+                     "pm.environment.set(\\\"evil\\\", eval('1'));",
+                     "pm.environment.set(\\\"bad name!\\\", jsonData.x);",
+                     "pm.environment.set(\\\"other\\\", somethingElse.x);",
+                     "pm.test('ok', function () { pm.response.to.have.status(200); });"
+                   ]}}],
+                   "request": {"method": "POST", "url": "https://h/login?e={{$randomEmail}}&t={{$timestamp}}"}}]}""";
+        Postman.Result r = Postman.read(json);
+        RequestDef q = r.collection().items.get(0).request;
+        assertEquals(List.of("token=body.access_token", "uid=body.user.id", "loc=header.Location", "first=body.items[0].id"),
+                q.captures.stream().map(k -> k.key + "=" + k.value).toList());
+        String notes = String.join("\n", r.notes());
+        assertTrue(notes.contains("1 script was left out"), "the rest of the script is still reported: " + notes);
+        assertTrue(notes.contains("4 values that test scripts saved"), notes);
+        assertTrue(notes.contains("{{$randomEmail}}") && !notes.contains("{{$timestamp}}"), notes);
     }
 }

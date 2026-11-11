@@ -33,6 +33,7 @@ public final class Samples {
         c.variables.add(secret("password", "s3cret-pass"));
         c.variables.add(secret("token", "demo-token-123"));
         c.variables.add(new Variable("userId", "7"));
+        c.variables.add(new Variable("sampleUuid", "send-Capture-a-value-first"));
         c.variables.add(new Variable("greeting", "hello from REST Client"));
 
         CollectionNode basics = folder(c, "1 · Basics");
@@ -118,6 +119,22 @@ public final class Samples {
         add(vars, get("Hover a variable", "{{baseUrl}}/anything/users/{{userId}}?greeting={{greeting}}"));
         add(vars, get("Switch environment", "{{baseUrl}}/anything/users/{{userId}}"));
         add(vars, get("Undefined variable", "{{baseUrl}}/anything/{{notDefinedYet}}"));
+
+        CollectionNode chain = folder(c, "8 · Capture, built-ins, uploads");
+        RequestDef capture = get("Capture a value", "{{baseUrl}}/uuid");
+        capture.captures.add(new KeyValue("sampleUuid", "body.uuid"));
+        capture.captures.add(new KeyValue("sampleType", "header.Content-Type"));
+        add(chain, capture);
+        add(chain, get("Use the captured value", "{{baseUrl}}/anything/{{sampleUuid}}"));
+        RequestDef builtIns = req("Built-in variables", HttpMethod.POST, "{{baseUrl}}/post?requestId={{$guid}}");
+        builtIns.bodyType = BodyType.JSON;
+        builtIns.body = "{\n  \"id\": \"{{$guid}}\",\n  \"createdAt\": \"{{$isoTimestamp}}\",\n  \"seconds\": {{$timestamp}},\n  \"lucky\": {{$randomInt}}\n}";
+        add(chain, builtIns);
+        RequestDef multipart = req("Multipart form", HttpMethod.POST, "{{baseUrl}}/post");
+        multipart.bodyType = BodyType.MULTIPART;
+        multipart.multipart.add(new KeyValue("title", "Hello from {{username}}"));
+        multipart.multipart.add(new KeyValue("note", "Set a row's Type to File to upload a file"));
+        add(chain, multipart);
         return c;
     }
 

@@ -36,7 +36,10 @@ public final class CurlExporter {
         for (KeyValue h : r.headers) {
             if (!h.enabled || h.key == null || h.key.isBlank()) continue;
             String key = v(resolver, h.key.trim());
-            if (key.equalsIgnoreCase("Content-Type")) hasContentType = true;
+            if (key.equalsIgnoreCase("Content-Type")) {
+                if (r.bodyType == BodyType.MULTIPART) continue; // curl writes it, with the boundary
+                hasContentType = true;
+            }
             if (key.equalsIgnoreCase("Authorization")) hasAuthorization = true;
             String value = v(resolver, h.value);
             // "Name;" is curl's way to send a header with an empty value.
@@ -62,6 +65,27 @@ public final class CurlExporter {
                 String key = URLEncoder.encode(v(resolver, f.key), StandardCharsets.UTF_8);
                 options.add("--data-urlencode " + quote(key + "=" + v(resolver, f.value)));
             }
+        }
+        else if (bt == BodyType.MULTIPART) {
+            for (KeyValue f : r.multipart) {
+                if (!f.enabled || f.key == null || f.key.isBlank()) continue;
+                String key = v(resolver, f.key);
+                String value = v(resolver, f.value);
+                if (f.file) {
+                    String path = value.trim();
+                    // quotes keep a comma or semicolon in the path from being read as curl's own syntax
+                    if (path.matches(".*[,;\"].*")) path = "\"" + path.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+                    options.add("-F " + quote(key + "=@" + path));
+                } else if (value.startsWith("@") || value.startsWith("<") || value.contains(";") || value.startsWith("\"")) {
+                    options.add("--form-string " + quote(key + "=" + value)); // -F would read these as its own syntax
+                } else {
+                    options.add("-F " + quote(key + "=" + value));
+                }
+            }
+        } else if (bt == BodyType.BINARY) {
+            String path = v(resolver, r.bodyFile).trim();
+            if (!hasContentType) options.add("-H " + quote("Content-Type: " + dev.restclient.http.MediaTypes.forFile(path)));
+            options.add("--data-binary " + quote("@" + path));
         }
         if (r.timeoutSeconds > 0) options.add("--max-time " + r.timeoutSeconds);
 

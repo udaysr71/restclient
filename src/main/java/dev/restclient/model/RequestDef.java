@@ -21,6 +21,15 @@ public class RequestDef {
     public BodyType bodyType = BodyType.NONE;
     public String body = "";
     public List<KeyValue> form = new ArrayList<>();
+    /** Parts of a multipart/form-data body; a row with {@code file} set uploads the file its value points to. */
+    public List<KeyValue> multipart = new ArrayList<>();
+    /** Path of the file sent as the whole body ({@link BodyType#BINARY}). */
+    public String bodyFile = "";
+    /**
+     * Values to keep from the response: key = variable name, value = where to take it from
+     * (see {@code dev.restclient.capture.Capture}).
+     */
+    public List<KeyValue> captures = new ArrayList<>();
     public Auth auth = new Auth();
     /** {@code null} = use the global default from Settings. */
     public Boolean insecure;
@@ -38,6 +47,9 @@ public class RequestDef {
         r.bodyType = bodyType;
         r.body = body;
         r.form = copyList(form);
+        r.multipart = copyList(multipart);
+        r.bodyFile = bodyFile;
+        r.captures = copyList(captures);
         r.auth = auth == null ? new Auth() : auth.copy();
         r.insecure = insecure;
         r.timeoutSeconds = timeoutSeconds;
@@ -74,6 +86,8 @@ public class RequestDef {
         return Objects.equals(name, o.name) && method == o.method && Objects.equals(url, o.url)
                 && Objects.equals(disabledParams, o.disabledParams) && Objects.equals(headers, o.headers)
                 && bodyType == o.bodyType && Objects.equals(body, o.body) && Objects.equals(form, o.form)
+                && Objects.equals(multipart, o.multipart) && Objects.equals(bodyFile == null ? "" : bodyFile, o.bodyFile == null ? "" : o.bodyFile)
+                && Objects.equals(captures, o.captures)
                 && Objects.equals(auth, o.auth) && Objects.equals(insecure, o.insecure)
                 && timeoutSeconds == o.timeoutSeconds;
     }

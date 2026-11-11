@@ -76,9 +76,8 @@ public final class HttpService {
     public Call send(PreparedRequest p, boolean insecure, Duration timeout) {
         HttpRequest.Builder rb = HttpRequest.newBuilder(p.uri).timeout(timeout);
         for (KeyValue kv : p.headers) rb.header(kv.key, kv.value);
-        HttpRequest.BodyPublisher pub = p.body == null
-                ? HttpRequest.BodyPublishers.noBody()
-                : HttpRequest.BodyPublishers.ofString(p.body);
+        HttpRequest.BodyPublisher pub = p.bodyBytes != null ? HttpRequest.BodyPublishers.ofByteArray(p.bodyBytes)
+                : p.body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(p.body);
         rb.method(p.method.name(), pub);
 
         HttpRequest request;

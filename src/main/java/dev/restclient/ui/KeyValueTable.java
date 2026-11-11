@@ -41,7 +41,12 @@ public class KeyValueTable extends JPanel {
     private static final int COL_ON = 0;
     private static final int COL_KEY = 1;
     private static final int COL_VALUE = 2;
-    private static final int COL_DELETE = 3;
+    /** Only in tables that allow file rows: whether the row's value is text or a file to upload. */
+    private static final int COL_TYPE = 3;
+    private final int COL_DELETE;
+    private final boolean files;
+    private String keyTitle = "Key";
+    private String valueTitle = "Value";
 
     private final List<KeyValue> rows = new ArrayList<>();
     private final Model model = new Model();
@@ -57,7 +62,16 @@ public class KeyValueTable extends JPanel {
     public KeyValueTable(Supplier<VariableResolver> resolver, VarSupport.Actions actions, String keyPlaceholder,
                          String valuePlaceholder, Function<String, List<String>> keySuggest,
                          BiFunction<String, String, List<String>> valueSuggest) {
+        this(resolver, actions, keyPlaceholder, valuePlaceholder, keySuggest, valueSuggest, false);
+    }
+
+    /** @param files adds a Type column so a row can be a file to upload instead of text (multipart bodies) */
+    public KeyValueTable(Supplier<VariableResolver> resolver, VarSupport.Actions actions, String keyPlaceholder,
+                         String valuePlaceholder, Function<String, List<String>> keySuggest,
+                         BiFunction<String, String, List<String>> valueSuggest, boolean files) {
         super(new BorderLayout());
+        this.files = files;
+        this.COL_DELETE = files ? 4 : 3;
         this.resolver = resolver;
         this.keyPlaceholder = keyPlaceholder;
         this.valuePlaceholder = valuePlaceholder;
@@ -91,6 +105,12 @@ public class KeyValueTable extends JPanel {
         del.setMaxWidth(30);
         del.setMinWidth(30);
         del.setCellRenderer(new DeleteRenderer());
+        if (files) {
+            TableColumn type = table.getColumnModel().getColumn(COL_TYPE);
+            type.setMaxWidth(Theme.scaled(72));
+            type.setMinWidth(Theme.scaled(72));
+            type.setCellRenderer(new TypeRenderer());
+        }
         table.getColumnModel().getColumn(COL_KEY).setPreferredWidth(220);
         table.getColumnModel().getColumn(COL_VALUE).setPreferredWidth(380);
 
@@ -122,6 +142,7 @@ public class KeyValueTable extends JPanel {
                 int r = table.rowAtPoint(e.getPoint());
                 int c = table.columnAtPoint(e.getPoint());
                 if (c == COL_DELETE && r >= 0 && r < rows.size() - 1) removeRows(new int[]{r});
+                if (files && c == COL_TYPE && r >= 0) showTypeMenu(r);
             }
 
             @Override
@@ -160,6 +181,60 @@ public class KeyValueTable extends JPanel {
 
     public JTable table() {
         return table;
+    }
+
+    /** Column headings, when "Key" and "Value" aren't the right words. */
+    public KeyValueTable titles(String key, String value) {
+        keyTitle = key;
+        valueTitle = value;
+        table.getColumnModel().getColumn(COL_KEY).setHeaderValue(key);
+        table.getColumnModel().getColumn(COL_VALUE).setHeaderValue(value);
+        table.getTableHeader().repaint();
+        return this;
+    }
+
+    // ---- file rows -------------------------------------------------------------------------
+
+    private void showTypeMenu(int row) {
+        if (table.isEditing()) table.getCellEditor().stopCellEditing();
+        if (row >= rows.size()) return;
+        KeyValue kv = rows.get(row);
+        javax.swing.JPopupMenu m = new javax.swing.JPopupMenu();
+        javax.swing.JRadioButtonMenuItem text = new javax.swing.JRadioButtonMenuItem("Text", !kv.file);
+        text.addActionListener(e -> setFile(row, false, null));
+        javax.swing.JRadioButtonMenuItem file = new javax.swing.JRadioButtonMenuItem("File", kv.file);
+        file.addActionListener(e -> chooseFile(row));
+        m.add(text);
+        m.add(file);
+        if (kv.file) {
+            javax.swing.JMenuItem other = new javax.swing.JMenuItem("Choose Another File…");
+            other.addActionListener(e -> chooseFile(row));
+            m.addSeparator();
+            m.add(other);
+        }
+        java.awt.Rectangle cell = table.getCellRect(row, COL_TYPE, true);
+        m.show(table, cell.x, cell.y + cell.height);
+    }
+
+    /** Asks for a file and makes the row upload it. */
+    void chooseFile(int row) {
+        java.io.File f = FileChoosers.open(this, "Choose a File to Upload");
+        if (f != null) setFile(row, true, f.getPath());
+    }
+
+    private void setFile(int row, boolean file, String path) {
+        if (row >= rows.size()) return;
+        KeyValue kv = rows.get(row);
+        if (kv.file == file && path == null) return;
+        kv.file = file;
+        if (path != null) kv.value = path;
+        else if (!file) kv.value = "";
+        model.fireTableRowsUpdated(row, row);
+        if (row == rows.size() - 1 && !kv.isBlank()) {
+            rows.add(new KeyValue());
+            model.fireTableRowsInserted(rows.size() - 1, rows.size() - 1);
+        }
+        onChange.run();
     }
 
     public void onChange(Runnable r) {
@@ -235,7 +310,9 @@ public class KeyValueTable extends JPanel {
         for (VariableResolver.Token t : tokens) {
             var res = r.lookup(t.name());
             sb.append("<b>").append(Ui.escape(t.name())).append("</b> ");
-            if (res.isEmpty()) {
+            if (dev.restclient.vars.DynamicVars.isDynamic(t.name())) {
+                sb.append("— ").append(Ui.escape(dev.restclient.vars.DynamicVars.describe(t.name())));
+            } else if (res.isEmpty()) {
                 sb.append("— not defined");
             } else {
                 String v = res.get().secret() ? VariableResolver.MASK : res.get().value();
@@ -255,15 +332,15 @@ public class KeyValueTable extends JPanel {
 
         @Override
         public int getColumnCount() {
-            return 4;
+            return files ? 5 : 4;
         }
 
         @Override
         public String getColumnName(int c) {
             return switch (c) {
-                case COL_KEY -> "Key";
-                case COL_VALUE -> "Value";
-                default -> "";
+                case COL_KEY -> keyTitle;
+                case COL_VALUE -> valueTitle;
+                default -> files && c == COL_TYPE ? "Type" : "";
             };
         }
 
@@ -274,7 +351,7 @@ public class KeyValueTable extends JPanel {
 
         @Override
         public boolean isCellEditable(int r, int c) {
-            if (c == COL_DELETE) return false;
+            if (c == COL_DELETE || (files && c == COL_TYPE)) return false;
             if (c == COL_ON) return r < rows.size() - 1;
             return true;
         }
@@ -328,12 +405,31 @@ public class KeyValueTable extends JPanel {
             boolean enabled = row < rows.size() && rows.get(row).enabled;
             field.setFont(Theme.mono(12.5f));
             field.setText(value == null ? "" : value.toString());
-            Ui.placeholder(field, placeholderRow ? (isKey ? keyPlaceholder : valuePlaceholder) : null);
+            boolean fileRow = !isKey && row < rows.size() && rows.get(row).file;
+            Ui.placeholder(field, placeholderRow ? (isKey ? keyPlaceholder : valuePlaceholder) : fileRow ? "Path of the file to upload" : null);
             field.setForeground(enabled || placeholderRow ? t.getForeground() : Theme.secondary());
             field.setBackground(rowBackground(t, row, selected));
             if (selected && !placeholderRow) field.setForeground(t.getSelectionForeground());
             VarSupport.highlightOnly(field, resolver.get());
             return field;
+        }
+    }
+
+    /** "Text" or "File" with a small arrow: it opens a menu. */
+    private final class TypeRenderer extends DefaultTableCellRenderer {
+        @Override
+        public Component getTableCellRendererComponent(JTable t, Object value, boolean selected, boolean focus, int row, int col) {
+            boolean file = row < rows.size() && rows.get(row).file;
+            super.getTableCellRendererComponent(t, file ? "File" : "Text", selected, false, row, col);
+            setIcon(Icons.get("chevron-down", 12));
+            setHorizontalTextPosition(LEFT);
+            setIconTextGap(3);
+            setBackground(rowBackground(t, row, selected));
+            boolean placeholderRow = row == rows.size() - 1;
+            setForeground(selected && !placeholderRow ? t.getSelectionForeground() : file ? Theme.text() : Theme.secondary());
+            setFont(t.getFont().deriveFont(file ? java.awt.Font.BOLD : java.awt.Font.PLAIN, t.getFont().getSize2D() - 1f));
+            setToolTipText(file ? "Uploads the file at this path. Click to change." : "Sent as text. Click to upload a file instead.");
+            return this;
         }
     }
 

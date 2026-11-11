@@ -324,6 +324,7 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
         for (String id : new String[]{"send", "copyCurl", "copyCurlVars", "focusUrl", "toggleTls", "find", "duplicateTab"}) {
             enable(id, req);
         }
+        for (dev.restclient.codegen.CodeGen.Language l : dev.restclient.codegen.CodeGen.Language.values()) enable("copyCode" + l.name(), req);
         enable("close", tabs.getTabCount() > 0);
         enable("closeOthers", tabs.getTabCount() > 1);
         enable("closeAll", tabs.getTabCount() > 0);
@@ -452,6 +453,66 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
     @Override
     public void defineVariable(String name) {
         showEnvironments(null, name, true);
+    }
+
+    /**
+     * Saves values captured from a response into variables. A variable is updated where it's already defined (the
+     * definition that wins: active environment, then the collection, then Globals); a new one goes into the active
+     * environment, or Globals when none is selected. Returns notes about rules that found nothing.
+     */
+    public List<String> storeCaptures(String collectionId, List<dev.restclient.capture.Capture.Outcome> outcomes) {
+        List<String> problems = new ArrayList<>();
+        if (outcomes.isEmpty()) return problems;
+        Environment env = ctx.repo.activeEnvironment();
+        ApiCollection col = ctx.repo.collection(collectionId);
+        Environment globals = ctx.repo.globals();
+        java.util.Set<Object> touched = new java.util.LinkedHashSet<>();
+        List<String> saved = new ArrayList<>();
+        String where = null;
+        for (dev.restclient.capture.Capture.Outcome o : outcomes) {
+            if (!o.ok()) {
+                problems.add("Nothing saved to " + o.variable() + ": " + o.problem() + ".");
+                continue;
+            }
+            Variable target = null;
+            Object owner = null;
+            String ownerName = null;
+            if (env != null && (target = enabledVariable(env.variables, o.variable())) != null) {
+                owner = env;
+                ownerName = env.name;
+            } else if (col != null && (target = enabledVariable(col.variables, o.variable())) != null) {
+                owner = col;
+                ownerName = col.name;
+            } else if ((target = enabledVariable(globals.variables, o.variable())) != null) {
+                owner = globals;
+                ownerName = "Globals";
+            } else {
+                Environment into = env != null ? env : globals;
+                target = new Variable(o.variable(), "");
+                into.variables.add(target);
+                owner = into;
+                ownerName = env != null ? env.name : "Globals";
+            }
+            target.value = o.value();
+            touched.add(owner);
+            saved.add(o.variable());
+            where = where == null || where.equals(ownerName) ? ownerName : "several places";
+        }
+        for (Object owner : touched) {
+            if (owner instanceof ApiCollection c) ctx.repo.saveCollection(c);
+            else ctx.repo.saveEnvironment((Environment) owner);
+        }
+        if (!saved.isEmpty()) {
+            variablesChanged();
+            String names = saved.size() <= 3 ? String.join(", ", saved) : saved.size() + " values";
+            status("Saved " + names + " to " + where, "Show", () -> showEnvironments(null, saved.get(0), false));
+        }
+        return problems;
+    }
+
+    private static Variable enabledVariable(List<Variable> vars, String name) {
+        for (Variable v : vars) if (v.enabled && name.equals(v.key)) return v;
+        return null;
     }
 
     public VariableResolver currentResolver() {
@@ -901,6 +962,10 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
             }
             r = dev.restclient.postman.Postman.read(java.nio.file.Files.readString(file, java.nio.charset.StandardCharsets.UTF_8));
         } catch (dev.restclient.postman.Postman.ImportException e) {
+            if (looksLikeOpenApi(file)) { // picked through the Postman item: import it as what it is
+                importOpenApi(file);
+                return;
+            }
             Ui.error(this, "Couldn't import “" + file.getFileName() + "”", e.getMessage());
             return;
         } catch (java.io.IOException | RuntimeException e) {
@@ -908,21 +973,7 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
             return;
         }
         if (r.isCollection()) {
-            ApiCollection c = r.collection();
-            c.name = uniqueName(c.name, ctx.repo.collections().stream().map(x -> x.name).toList());
-            ctx.repo.addCollection(c);
-            sidebar.collections().expandedIds().add(c.id);
-            showSidebar("collections");
-            sidebar.collections().rebuild();
-            sidebar.collections().select(c.id);
-            String what = "Imported “" + c.name + "”: " + r.requests() + (r.requests() == 1 ? " request" : " requests")
-                    + (r.folders() > 0 ? " in " + r.folders() + (r.folders() == 1 ? " folder" : " folders") : "");
-            if (r.notes().isEmpty()) {
-                status(what, "Undo", () -> ctx.repo.deleteCollection(c));
-            } else {
-                status(what + " · " + r.notes().size() + (r.notes().size() == 1 ? " thing" : " things") + " to know",
-                        "Details", () -> importNotes(c.name, r.notes()));
-            }
+            addImportedCollection(r.collection(), r.requests(), r.folders(), r.notes());
         } else if (r.isGlobals()) {
             importGlobals(r.environment().variables);
         } else {
@@ -932,6 +983,65 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
             variablesChanged();
             status("Imported environment “" + e.name + "” (" + e.variables.size() + (e.variables.size() == 1 ? " variable)" : " variables)"),
                     "Use It", () -> switchEnvironment(e));
+        }
+    }
+
+    private void addImportedCollection(ApiCollection c, int requests, int folders, List<String> notes) {
+        c.name = uniqueName(c.name, ctx.repo.collections().stream().map(x -> x.name).toList());
+        ctx.repo.addCollection(c);
+        sidebar.collections().expandedIds().add(c.id);
+        showSidebar("collections");
+        sidebar.collections().rebuild();
+        sidebar.collections().select(c.id);
+        variablesChanged();
+        String what = "Imported “" + c.name + "”: " + requests + (requests == 1 ? " request" : " requests")
+                + (folders > 0 ? " in " + folders + (folders == 1 ? " folder" : " folders") : "");
+        if (notes.isEmpty()) {
+            status(what, "Undo", () -> ctx.repo.deleteCollection(c));
+        } else {
+            status(what + " · " + notes.size() + (notes.size() == 1 ? " thing" : " things") + " to know",
+                    "Details", () -> importNotes(c.name, notes));
+        }
+    }
+
+    // ---- OpenAPI ---------------------------------------------------------------------------
+
+    /** File › Import OpenAPI or Swagger…: a JSON or YAML description becomes a collection. */
+    public void importOpenApi() {
+        java.io.File f = FileChoosers.open(this, "Import OpenAPI or Swagger", "json", "yaml", "yml");
+        if (f != null) importOpenApi(f.toPath());
+    }
+
+    public void importOpenApi(java.nio.file.Path file) {
+        dev.restclient.openapi.OpenApi.Result r;
+        try {
+            if (java.nio.file.Files.size(file) > dev.restclient.openapi.OpenApi.MAX_BYTES) {
+                Ui.error(this, "Couldn't import", "“" + file.getFileName() + "” is larger than 20 MB.");
+                return;
+            }
+            String text = java.nio.file.Files.readString(file, java.nio.charset.StandardCharsets.UTF_8);
+            if (!dev.restclient.openapi.OpenApi.looksLike(text) && text.stripLeading().startsWith("{")
+                    && text.contains("\"item\"") && text.contains("\"info\"")) {
+                importPostman(file); // a Postman collection picked through this item
+                return;
+            }
+            r = dev.restclient.openapi.OpenApi.read(text);
+        } catch (dev.restclient.openapi.OpenApi.ImportException e) {
+            Ui.error(this, "Couldn't import “" + file.getFileName() + "”", e.getMessage());
+            return;
+        } catch (java.io.IOException | RuntimeException e) {
+            Ui.error(this, "Couldn't read “" + file.getFileName() + "”", e.getMessage() == null ? e.toString() : e.getMessage());
+            return;
+        }
+        addImportedCollection(r.collection(), r.requests(), r.folders(), r.notes());
+    }
+
+    private static boolean looksLikeOpenApi(java.nio.file.Path file) {
+        try {
+            return java.nio.file.Files.size(file) <= dev.restclient.openapi.OpenApi.MAX_BYTES
+                    && dev.restclient.openapi.OpenApi.looksLike(java.nio.file.Files.readString(file, java.nio.charset.StandardCharsets.UTF_8));
+        } catch (java.io.IOException | RuntimeException e) {
+            return false;
         }
     }
 
@@ -1413,6 +1523,7 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
         action("newCollection", "New Collection…", Keys.NEW_COLLECTION, this::newCollection);
         action("import", "Import cURL…", Keys.IMPORT_CURL, () -> showCurlImport(null));
         action("importPostman", "Import from Postman…", null, this::importPostman);
+        action("importOpenApi", "Import OpenAPI or Swagger…", null, this::importOpenApi);
         action("exportPostman", "Export Collection to Postman…", null, () -> exportCollection(null));
         action("save", "Save", Keys.SAVE, () -> withTab(t -> saveTab(t, false)));
         action("saveAs", "Save As…", Keys.SAVE_AS, () -> withTab(t -> saveTab(t, true)));
@@ -1421,6 +1532,9 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
         action("send", "Send Request", Keys.SEND, () -> withTab(RequestTab::send));
         action("copyCurl", "Copy as cURL", Keys.COPY_CURL, () -> withTab(t -> t.copyAsCurl(true)));
         action("copyCurlVars", "Copy as cURL (keep {{variables}})", null, () -> withTab(t -> t.copyAsCurl(false)));
+        for (dev.restclient.codegen.CodeGen.Language l : dev.restclient.codegen.CodeGen.Language.values()) {
+            action("copyCode" + l.name(), "Copy as " + l.label, null, () -> withTab(t -> t.copyAsCode(l)));
+        }
         action("focusUrl", "Focus URL", Keys.FOCUS_URL, () -> withTab(RequestTab::focusUrl));
         action("toggleTls", "Toggle TLS Verification for Request", null,
                 () -> withTab(t -> t.setInsecure(!ctx.effectiveInsecure(t.draft()))));
@@ -1479,7 +1593,7 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
     private JMenuBar buildMenuBar() {
         JMenuBar mb = new JMenuBar();
         JMenu file = new JMenu("File");
-        add(file, "new", "newCollection", null, "import", "importPostman", "exportPostman", null, "save", "saveAs", null, "close");
+        add(file, "new", "newCollection", null, "import", "importPostman", "importOpenApi", "exportPostman", null, "save", "saveAs", null, "close");
         if (!Platform.isMac()) add(file, null, "settings", null, "quit");
         JMenu edit = new JMenu("Edit");
         add(edit, "undo", "redo", null);
@@ -1515,8 +1629,15 @@ public class MainFrame extends JFrame implements VarSupport.Actions {
         });
         view.add(appearance);
         JMenu request = new JMenu("Request");
-        add(request, "send", null, "copyCurl", "copyCurlVars", null, "focusUrl", "toggleTls", null, "switchEnv", "manageEnv", null,
-                "certificates", "clearHistory");
+        add(request, "send", null, "copyCurl", "copyCurlVars");
+        JMenu copyCode = new JMenu("Copy as Code");
+        for (dev.restclient.codegen.CodeGen.Language l : dev.restclient.codegen.CodeGen.Language.values()) {
+            JMenuItem item = new JMenuItem(actions.get("copyCode" + l.name()));
+            item.setText(l.label);
+            copyCode.add(item);
+        }
+        request.add(copyCode);
+        add(request, null, "focusUrl", "toggleTls", null, "switchEnv", "manageEnv", null, "certificates", "clearHistory");
         JMenu window = new JMenu("Window");
         add(window, "palette", null, "nextTab", "prevTab", null, "duplicateTab", "reopenTab", null, "closeOthers", "closeAll");
         JMenu help = new JMenu("Help");

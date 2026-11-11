@@ -34,13 +34,19 @@ test kit — is in this repository, and the build needs nothing but a JDK. See [
   - hover a variable to see its value and where it comes from; ⌘/Ctrl-click to jump to it
   - undefined variables are underlined in red, with a one-click "Define…"
   - autocomplete after typing `{{`
+  - built-in values made up per request: `{{$guid}}`, `{{$timestamp}}`, `{{$isoTimestamp}}`, `{{$randomInt}}`…
+- **Capture**: save a value from a response (a JSON field, a header, a cookie, the status) into a variable
+  for the next request to use, with no scripting
+- File uploads: multipart form-data with text and file parts, or one file as the whole body
 - Recent history, grouped by day, with read-only snapshots (secrets masked)
 - Responses: Pretty, Raw, Headers and Request views, find, copy and save. *Request* shows what was actually
   sent: the URL and headers with variables filled in (secret values hidden) and the body. In Headers, ⌘C / Ctrl+C copies the selected
   rows as `Name: Value` lines, right-click offers Copy Value / Name / Row / All Headers, and the Copy button
   copies them all. Drag the column divider to resize; double-click it to fit the names.
 - cURL import (paste into any URL field, or the import dialog) and export
+- Copy as code: Java `HttpClient`, Python `requests`, JavaScript `fetch`, PowerShell
 - Postman import and export: collections (v2.0 and v2.1) and environments
+- OpenAPI 3 and Swagger 2 import, JSON or YAML (read by the app's own YAML reader)
 - A sample collection that tours every feature against httpbin.org (added on first launch)
 - TLS: extra trusted certificates and client certificates from `~/.restclient/certs`,
   a "Trust this certificate" flow, and per-request or default "skip verification" (certificate **and** hostname)
@@ -165,18 +171,93 @@ check runs — for that request only. The alternative, the JVM-wide system prope
 verified requests, so it is deliberately **not** used. Verified and skipped requests use two separate
 `HttpClient` instances. (`TlsManagerTest` checks this end to end against a local HTTPS server.)
 
+### Built-in variables
+
+Names that start with `$` are built in. They get a new value every time a request is sent, and every place
+one is used gets its own value. The names are Postman's, so imported requests keep working.
+
+| Variable | Value |
+|---|---|
+| `{{$guid}}`, `{{$randomUUID}}` | A random UUID |
+| `{{$timestamp}}` | The current time in seconds since 1970 |
+| `{{$isoTimestamp}}` | The current time as ISO 8601, in UTC |
+| `{{$randomInt}}` | A whole number from 0 to 1000 |
+| `{{$randomBoolean}}` | `true` or `false` |
+| `{{$randomAlphaNumeric}}` | One letter or digit |
+
+They autocomplete once you type `{{$`, and hovering one says what it produces. The *Request* view and
+History show the values that were actually sent. You can't define a variable of your own with one of these
+names, and other `$names` (Postman has many more, such as `{{$randomEmail}}`) are flagged as not defined.
+
+### Capture: saving values from a response
+
+The **Capture** tab on a request lists values to keep from its response, so a later request can use them:
+log in, keep the token, call the API. There is no scripting engine; a rule is a variable name and where to
+take the value from.
+
+| Source | Takes |
+|---|---|
+| `status` | The status code |
+| `header.Location` | A response header (the name isn't case-sensitive) |
+| `cookie.session` | A cookie the response sets |
+| `body` | The whole body as text |
+| `body.data.token`, `$.data.token`, `data.token` | A value in a JSON body |
+| `body.items[0].id`, `body.items[-1].id` | An item of a list; `-1` is the last |
+| `body["odd name"].x` | A name with dots or spaces in it |
+
+After a response, the source column autocompletes with what that response actually contains.
+
+Where the value goes: if the variable already exists, it's updated where it's defined (the definition that
+wins: active environment, then the collection, then Globals), and a secret stays secret. A new variable
+goes into the active environment, or into Globals when none is selected. The status bar says what was
+saved; a rule that finds nothing says why under the response and saves nothing. Failed requests capture
+nothing. Values over 64 KB are cut.
+
+## File uploads
+
+The **Body** tab has two upload types:
+
+- **Multipart** sends `multipart/form-data`. Each row is a field; set its *Type* to **File** to pick a file
+  to upload instead of typing text. The file's name and a content type guessed from its extension are sent
+  with it. The `Content-Type` header, with its boundary, is written for you.
+- **File** sends one file as the whole body. `Content-Type` comes from the extension unless you add the
+  header yourself.
+
+Paths can contain `{{variables}}`. Files are read when you press Send, so a file that has moved is reported
+then, without sending anything. Files are built into the request in memory; the limit is 100 MB each.
+History and the *Request* view name the file and its size, and never store its contents.
+
 ## cURL
 
 - **Import:** paste a `curl …` command into any URL field and it's imported into that tab, or use
   **File › Import cURL…** (⌘⇧I / Ctrl+Shift+I) for a live preview.
   Supported: `-X/--request`, `-H/--header`, `-d/--data/--data-raw/--data-binary/--data-ascii`,
   `--data-urlencode`, `--json`, `-u/--user`, `-k/--insecure`, `--url`, `-G/--get`, `-I/--head`,
-  `-A/--user-agent`, `-e/--referer`, `-b/--cookie`, `-m/--max-time`, `--oauth2-bearer`;
+  `-A/--user-agent`, `-e/--referer`, `-b/--cookie`, `-m/--max-time`, `--oauth2-bearer`,
+  `-F/--form` and `--form-string` (multipart; `name=@file` uploads), `--data-binary @file` (file body);
   single/double/`$'…'` quoting, `\` line continuations, combined flags like `-sSLk` and `-XPOST`.
   Options that don't apply are listed as *ignored*, never dropped silently; parse errors show the
   line and column.
 - **Export:** ⋯ › *Copy as cURL* (⌥⌘C / Ctrl+Alt+C) resolves variables with the active environment;
   *Copy as cURL (keep {{variables}})* leaves them as placeholders. `-k` is added when verification is skipped.
+
+## Copy as code
+
+⋯ › *Copy as Code* (also in the Request menu and the command palette) copies a short, runnable program that
+sends the current request:
+
+| Language | Uses |
+|---|---|
+| Java | `java.net.http.HttpClient` (JDK 11+) |
+| Python | `requests` |
+| JavaScript | `fetch` (browsers and Node.js 18+; file uploads use Node 20's `openAsBlob`) |
+| PowerShell | `Invoke-WebRequest` (`-Form` and `-SkipCertificateCheck` need PowerShell 6+) |
+
+Variables are replaced with their values, including secrets, because the code has to run on its own: treat
+the copied text like a password if the request has one. Every value from the request is written as a string
+literal with the language's own escaping, so a header or body can't turn into code. "Skip verification" is
+carried over where the language has a switch for it (Python, PowerShell) and noted in a comment where it
+doesn't.
 
 ## Sample collection
 
@@ -194,6 +275,7 @@ Collection* adds a fresh copy any time.
 | 5 · Timeouts and errors | A slow request to cancel, a per-request timeout, connection refused, an unknown host |
 | 6 · Certificates | [badssl.com](https://badssl.com): self-signed (Trust or Retry Insecurely), wrong host, expired, verification off |
 | 7 · Variables | Hover popovers, environment overrides, an undefined variable to Define… |
+| 8 · Capture, built-ins, uploads | Capture a UUID from one response and use it in the next; `{{$guid}}` and friends; a multipart form |
 
 The collection's variables (`baseUrl`, `username`, a secret `password` and `token`, `userId`…) live on the
 collection. The **Local httpbin (Docker)** environment points it at a local copy instead: run
@@ -217,6 +299,9 @@ second import of the same file becomes "Shop API (2)".
 | Folders, requests, methods, headers (including disabled ones) | The same |
 | URL as text or as parts; disabled query params; `:id` path variables | The URL, disabled params kept disabled, path variables filled in |
 | Raw bodies (JSON, XML, text), `x-www-form-urlencoded` | JSON, XML, Text, Form bodies |
+| `form-data` with text and file fields; binary (`file`) bodies | Multipart and File bodies, with the file paths |
+| Test-script lines that save a value: `pm.environment.set("token", pm.response.json().token)` | Capture rules |
+| `{{$guid}}`, `{{$timestamp}}`, `{{$isoTimestamp}}`, `{{$randomInt}}` | The same built-in variables |
 | GraphQL body | A JSON body of `{"query", "variables"}` |
 | Basic and Bearer auth, including auth set on a folder or the collection | Auth on each request that inherits it; *No Auth* overrides |
 | API-key auth | A header or query parameter |
@@ -240,9 +325,18 @@ choose *Keep Mine* or *Replace With File's*. A secret left empty in the file nev
 in the status bar puts Globals back as it was.
 
 What can't come across is listed after the import (the status bar's *Details*): pre-request and test
-scripts, form-data file uploads and binary bodies, saved example responses, and other auth types
-(OAuth, Digest, AWS…). Multipart text fields are kept as a URL-encoded form. Postman's dynamic
-variables (`{{$guid}}`) are sent as written.
+scripts, saved example responses, other auth types (OAuth, Digest, AWS…), and Postman's other dynamic
+variables (`{{$randomEmail}}` and the like), which are sent as written.
+
+Scripts are never run. The one thing read out of a test script is the common "save a value" line:
+`pm.environment.set`, `pm.globals.set`, `pm.collectionVariables.set` or `postman.setEnvironmentVariable`
+with `pm.response.json().path`, a variable holding `pm.response.json()`, `pm.response.headers.get("…")`,
+`pm.response.code` or `pm.response.text()`. Those lines become Capture rules; anything else in the script
+is reported as left out. On export, Capture rules are written back as such lines, so they work in Postman.
+
+File paths in an imported collection come from the file, and a request that uploads a file sends it to
+whatever server the request names. The import says how many requests upload files; check the paths in the
+Body tab before sending a collection you didn't write.
 
 **Export:** File › *Export Collection to Postman…*, or right-click a collection › *Export to Postman…*,
 writes a Collection v2.1 file that Postman imports directly. URLs are written in Postman's parts form, so
@@ -252,6 +346,38 @@ environment has secrets, you're asked whether to include their values; by defaul
 
 Imported files are treated as untrusted. They're read by the app's own JSON parser (nesting is limited)
 and capped at 50 MB, and names are cleaned so they can't contain control characters or render as HTML.
+
+## OpenAPI and Swagger
+
+File › *Import OpenAPI or Swagger…* (also under the sidebar's **Import** button) turns an API description
+into a collection. It reads OpenAPI 3.0 and 3.1 and Swagger 2.0, in JSON or YAML.
+
+| From the file | Becomes |
+|---|---|
+| `info.title` | The collection's name |
+| The first server (or Swagger's `host` + `basePath`) | A `baseUrl` collection variable; every URL starts with `{{baseUrl}}` |
+| Each operation | A request, named from `summary`, then `operationId`, then `GET /path` |
+| Tags | Folders (an operation goes in its first tag's folder; untagged ones stay at the top) |
+| Path parameters `/orders/{id}` | `/orders/{{id}}` and an `id` collection variable, filled with the example if there is one |
+| Query and header parameters | Required ones are switched on, optional ones are listed switched off; values come from `example`, `default` or the first `enum` |
+| JSON request bodies | The file's example, or one built from the schema (`$ref`, `allOf`, `oneOf`; read-only fields left out) |
+| Form and multipart bodies | Form or Multipart rows; `format: binary` becomes a File row to fill in |
+| `http` bearer / basic, `apiKey`, OAuth 2 | Bearer `{{token}}`, Basic `{{username}}`/`{{password}}`, a header or query parameter with `{{apiKey}}`; the secret ones are secret variables |
+
+What isn't imported is listed in *Details*: cookie parameters, TRACE operations, and references to other
+files or URLs, which are never fetched. OAuth 2 sign-in isn't run; paste an access token into `token`.
+
+**YAML.** There's no YAML library in the JDK, so the app has its own reader
+([`Yaml.java`](src/main/java/dev/restclient/openapi/Yaml.java)) rather than a dependency. It reads the YAML
+that API descriptions use: nested mappings and lists, plain and quoted strings, `|` and `>` text blocks,
+inline `[a, b]` and `{a: b}`, comments, and anchors with aliases (`&a`, `*a`, `<<`). It doesn't read complex
+keys (`? `), it ignores tags, and it reads only the first document in a file. If a file uses something it
+can't read, the error names the line; converting the file to JSON always works.
+
+The file is treated as untrusted: it's capped at 20 MB, nesting depth and the total number of values are
+limited (aliases are counted at their expanded size, so a "billion laughs" file fails quickly), generated
+examples are bounded even when schemas refer to each other in a loop, at most 5,000 operations are
+imported, names are cleaned as for Postman imports, and header names are reduced to legal characters.
 
 ## Keyboard shortcuts
 
@@ -304,9 +430,13 @@ src/main/java/dev/restclient/
   App.java              entry point
   model/                RequestDef, ApiCollection, CollectionNode, Environment, Variable, HistoryEntry, Settings, Session
   store/                AppPaths, JsonStore (atomic JSON), Repository (state + background writes)
-  vars/                 VariableResolver (scopes, precedence, masking)
-  http/                 TlsManager, PreparedRequest, HttpService, ResponseData
+  vars/                 VariableResolver (scopes, precedence, masking), DynamicVars ({{$guid}}…)
+  http/                 TlsManager, PreparedRequest (incl. multipart), HttpService, ResponseData, MediaTypes
+  capture/              Capture (values from a response into variables)
+  codegen/              CodeGen (Copy as Code)
   curl/                 ShellTokenizer, CurlParser, CurlExporter
+  postman/              Postman collections, environments and globals: import and export
+  openapi/              OpenApi (OpenAPI 3 / Swagger 2 import), Yaml (the YAML reader)
   json/                 JSON parser, writer, reformatter, model mapper
   ui/                   Swing UI (MainFrame, RequestTab, VarSupport, CodeArea, TabStrip, dialogs…)
   ui/laf/               the look and feel
@@ -318,7 +448,7 @@ Build.java              JDK-only build script
 ## Tests
 
 ```bash
-java Build.java test           # 110 unit tests
+java Build.java test           # 157 unit tests
 java Build.java uicheck        # needs a display; on Linux CI: xvfb-run java Build.java uicheck
 java Build.java featurecheck   # just the end-to-end feature check
 ```
@@ -328,7 +458,7 @@ java Build.java featurecheck   # just the end-to-end feature check
 - **Interaction check** (98 checks): editing in fields and tables, `{{` autocomplete, the method combo, the
   palette with arrow keys, tab menus and drag-to-reorder, keyboard reachability, Save state rules, empty-URL
   handling, delete with Undo, zoom, themes and theme files, fonts, and an accessible-name audit.
-- **Feature check** (233 checks). It runs against a local HTTP and HTTPS server (self-signed certificate made
+- **Feature check** (344 checks, then 14 after a restart and 6 on a first launch). It runs against a local HTTP and HTTPS server (self-signed certificate made
   with `keytool`) that records every request, so it checks what the server actually received and what was
   saved to disk:
   - every method and body type, and headers and Basic/Bearer auth
@@ -338,6 +468,11 @@ java Build.java featurecheck   # just the end-to-end feature check
   - connection errors, timeouts and Cancel
   - the untrusted-certificate flow, retrying without verification, and Trust & Save
   - cURL copy → import → send round trips
+  - built-in variables as the server receives them, and that History shows the same values
+  - multipart and file uploads byte for byte, missing files, and the cURL round trip
+  - capture rules into environment, collection and Globals variables, and the next request using them
+  - Copy as Code in all four languages; the generated Java is compiled and run against the test server
+  - OpenAPI YAML and Swagger JSON imports, then sending the imported requests
   - collections, folders, rename, duplicate, delete and undo, and filter
   - Save, Save As and dirty state
   - history: filters, chips, delete and clear with undo
@@ -349,14 +484,19 @@ Both fail on any uncaught exception. `dev.restclient.ui.Gallery` opens every con
 `solarized_dark` for another theme), for checking components one at a time.
 
 Covers the JSON library, the cURL parser and exporter (including export → import round trips), variable resolution and
-precedence, request preparation (auth, content types, masking), persistence (atomic writes, renames,
+precedence, built-in variables, request preparation (auth, content types, masking, multipart bodies), capture
+rules, the code generators, the YAML reader and OpenAPI import (including hostile files), Postman import and
+export, persistence (atomic writes, renames,
 corrupt files), and TLS: untrusted → trusted after saving the certificate, hostname mismatch still caught
 when verifying, both skipped when not, bad files reported while others load, keystore passwords and
 client keys; plus the SVG path parser (including arcs) and the syntax lexers.
 
 ## Known limitations
 
-- Multipart (`-F`) bodies and file uploads aren't supported; such cURL options are listed as ignored.
+- Uploads are built in memory, so files over 100 MB each can't be sent.
+- No scripting: Capture covers saving values from a response; there are no pre-request scripts or tests.
+- OpenAPI import follows only references inside the file (`#/…`), and the YAML reader covers the common
+  subset described under [OpenAPI and Swagger](#openapi-and-swagger).
 - Client certificates must be in a `.p12/.pfx/.jks` store (PEM private keys aren't read).
 - Proxies come from the standard Java properties (`https.proxyHost`, `http.nonProxyHosts`, …) or the
   OS defaults Java picks up; there's no proxy UI.

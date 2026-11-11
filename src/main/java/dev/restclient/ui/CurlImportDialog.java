@@ -237,6 +237,13 @@ public final class CurlImportDialog {
             fs.setLayout(new BoxLayout(fs, BoxLayout.Y_AXIS));
             for (KeyValue kv : q.form) fs.add(mono(kv.key + " = " + kv.value));
             preview.add(section("Body · form", fs));
+        } else if (q.bodyType == BodyType.MULTIPART) {
+            JPanel fs = Ui.transparent(null);
+            fs.setLayout(new BoxLayout(fs, BoxLayout.Y_AXIS));
+            for (KeyValue kv : q.multipart) fs.add(mono(kv.key + " = " + (kv.file ? "file " : "") + kv.value));
+            preview.add(section("Body · multipart", fs));
+        } else if (q.bodyType == BodyType.BINARY) {
+            preview.add(section("Body · file", mono(q.bodyFile)));
         } else if (q.bodyType != BodyType.NONE) {
             String b = q.body.length() > 600 ? q.body.substring(0, 600) + "…" : q.body;
             String pretty = q.bodyType == BodyType.JSON ? Formatters.prettyJson(b) : null;

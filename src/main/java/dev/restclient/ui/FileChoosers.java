@@ -37,6 +37,30 @@ final class FileChoosers {
         return show(fd);
     }
 
+    /** Picks any file to open, or null. */
+    static File open(Component parent, String title) {
+        if (testPicker != null) return testPicker.apply(title, null);
+        return show(dialog(parent, title, FileDialog.LOAD));
+    }
+
+    /** Picks a file with one of the given extensions (lower case, no dot) to open, or null. */
+    static File open(Component parent, String title, String... extensions) {
+        if (testPicker != null) return testPicker.apply(title, null);
+        FileDialog fd = dialog(parent, title, FileDialog.LOAD);
+        fd.setFilenameFilter((dir, name) -> {
+            String n = name.toLowerCase();
+            for (String x : extensions) if (n.endsWith("." + x)) return true;
+            return false;
+        });
+        // Windows ignores filename filters; a wildcard file name filters its list instead
+        if (Platform.isWindows()) {
+            StringBuilder sb = new StringBuilder();
+            for (String x : extensions) sb.append(sb.length() == 0 ? "" : ";").append("*.").append(x);
+            fd.setFile(sb.toString());
+        }
+        return show(fd);
+    }
+
     /** Picks where to save, suggesting {@code name} (in {@code dir}, if given). Null if cancelled. */
     static File save(Component parent, String title, String name) {
         return save(parent, title, name, null);

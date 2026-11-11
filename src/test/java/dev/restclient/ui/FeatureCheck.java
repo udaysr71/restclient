@@ -19,6 +19,7 @@ import dev.restclient.model.Settings;
 import dev.restclient.model.Variable;
 import dev.restclient.store.AppPaths;
 import dev.restclient.store.Repository;
+import dev.restclient.vars.VariableResolver;
 
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
@@ -30,6 +31,7 @@ import javax.swing.JTextField;
 import javax.swing.JTree;
 import javax.swing.text.JTextComponent;
 import javax.swing.tree.TreePath;
+import java.awt.Component;
 import java.awt.Frame;
 import java.awt.event.KeyEvent;
 import java.io.ByteArrayOutputStream;
@@ -108,7 +110,15 @@ public final class FeatureCheck {
                 FeatureCheck::responses, FeatureCheck::errorsTimeoutsAndCancel, FeatureCheck::tls,
                 FeatureCheck::curl, FeatureCheck::collections, FeatureCheck::saving, FeatureCheck::historySection,
                 FeatureCheck::environments, FeatureCheck::palette, FeatureCheck::tabsAndShortcuts,
-                FeatureCheck::settings, FeatureCheck::helpAndDialogs, FeatureCheck::throughTheUi, FeatureCheck::postman, FeatureCheck::sampleCollection, FeatureCheck::prepareRelaunch);
+                FeatureCheck::settings, FeatureCheck::helpAndDialogs, FeatureCheck::throughTheUi, FeatureCheck::postman,
+                FeatureCheck::dynamicVariables, FeatureCheck::uploads, FeatureCheck::captures, FeatureCheck::copyAsCode, FeatureCheck::openApi, FeatureCheck::sampleCollection, FeatureCheck::prepareRelaunch);
+        // -Dfeaturecheck.only=18,19 runs just those sections (counting from 0), for working on one of them
+        String only = System.getProperty("featurecheck.only");
+        if (only != null) {
+            List<Runnable> picked = new ArrayList<>();
+            for (String i : only.split(",")) picked.add(sections.get(Integer.parseInt(i.trim())));
+            sections = picked;
+        }
         for (Runnable s : sections) {
             try {
                 s.run();
@@ -273,6 +283,10 @@ public final class FeatureCheck {
                 reply(ex, 200, "application/json", bos.toByteArray());
             } else if (p.equals("/latin1")) {
                 reply(ex, 200, "text/plain; charset=ISO-8859-1", "café".getBytes(StandardCharsets.ISO_8859_1));
+            } else if (p.equals("/login")) {
+                ex.getResponseHeaders().add("Set-Cookie", "session=sess-9; Path=/; HttpOnly");
+                ex.getResponseHeaders().add("Location", "/users/7");
+                reply(ex, 201, "application/json", "{\"data\":{\"token\":\"tok-fresh-1\",\"items\":[{\"id\":7},{\"id\":8}]},\"ok\":true}".getBytes(StandardCharsets.UTF_8));
             } else if (p.equals("/empty")) {
                 ex.sendResponseHeaders(204, -1);
                 ex.close();
@@ -340,6 +354,8 @@ public final class FeatureCheck {
                 }
             }
             reply(ex, 200, "application/json", "{}".getBytes(StandardCharsets.UTF_8));
+        } else if (p.equals("/uuid")) {
+            reply(ex, 200, "application/json", ("{\n  \"uuid\": \"" + java.util.UUID.randomUUID() + "\"\n}").getBytes(StandardCharsets.UTF_8));
         } else if (p.equals("/encoding/utf8")) {
             reply(ex, 200, "text/html; charset=utf-8", "∮ E⋅da = Q, ℝ, ᚻᛖ ᚳᚹᚫᚦ, Ελληνικά".getBytes(StandardCharsets.UTF_8));
         } else if (p.equals("/get") || p.equals("/post") || p.equals("/put") || p.equals("/patch") || p.equals("/delete")
@@ -1781,7 +1797,7 @@ public final class FeatureCheck {
                 x -> x.contains("Imported “Shop API”: 3 requests in 1 folder")) && visibleButton("Details") != null);
         pressLater("Details");
         check("Details lists what couldn't come across (the script and the file upload)", () -> dialogShowing(d ->
-                anyLabel(d, x -> x.contains("script") && x.contains("file upload"))));
+                anyLabel(d, x -> x.contains("script") && x.contains("uploads a file"))));
         closeDialogs();
         check("Collection variables come across", () -> shop.variables.stream().anyMatch(v -> v.key.equals("shopPath") && v.value.equals("shop")));
 
@@ -1966,11 +1982,493 @@ public final class FeatureCheck {
             // PROXY: where Java is set to use an HTTP proxy (like this check's sandbox), it answers for unknown hosts
             Map.entry("Unknown host", "DNS|PROXY"));
 
+    // ------------------------------------------------------------------ built-in variables
+
+    private static void dynamicVariables() {
+        section("Built-in variables: {{$guid}}, {{$timestamp}}, {{$randomInt}}, {{$isoTimestamp}}");
+        String uuid = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+        RequestTab t = newTab();
+        method(t, HttpMethod.POST);
+        url(t, "{{baseUrl}}/echo/dyn/{{$guid}}?t={{$timestamp}}&n={{$randomInt}}");
+        Ui.Segmented bt = field(t, "bodyType");
+        CodeArea editor = field(t, "bodyEditor");
+        segment(bt, BodyType.JSON.ordinal());
+        edt(() -> editor.setText("{\"id\": \"{{$guid}}\", \"at\": \"{{$isoTimestamp}}\"}"));
+        KeyValueTable headers = field(t, "headersTable");
+        edt(() -> headers.setRows(List.of(kv("X-Request-Id", "{{$guid}}", true))));
+        HistoryEntry h = send(t);
+        Seen seen = lastSeen();
+        verify("The server receives generated values in the URL", seen.path().matches("/echo/dyn/" + uuid + "\\?t=\\d{10}&n=\\d{1,4}"), seen.path());
+        verify("...in a header", String.valueOf(seen.header("X-Request-Id")).matches(uuid), seen.header("X-Request-Id"));
+        verify("...and in the body", seen.body().matches("\\{\"id\": \"" + uuid + "\", \"at\": \"\\d{4}-\\d\\d-\\d\\dT[0-9:.]+Z\"}"), seen.body());
+        String urlId = seen.path().substring(10, 46);
+        verify("Each place gets its own value", !seen.body().contains(urlId) && !urlId.equals(seen.header("X-Request-Id")), seen.toString());
+        verify("History and the Request view show exactly what was sent", h.sentUrl.endsWith(seen.path()) && seen.body().equals(h.sentBody)
+                && h.sentHeaders.stream().anyMatch(k -> k.key.equals("X-Request-Id") && k.value.equals(seen.header("X-Request-Id"))),
+                h.sentUrl + " | " + h.sentBody);
+        verify("The saved request keeps the {{$guid}} placeholders", h.request.url.contains("{{$guid}}") && h.request.body.contains("{{$isoTimestamp}}"), h.request.url);
+        check("No “Not defined” note for built-ins", () -> !responseSays(t, "Not defined"));
+        HistoryEntry h2 = send(t);
+        verify("Sending again generates new values", !h2.sentUrl.equals(h.sentUrl), h2.sentUrl);
+        check("Built-ins are highlighted as defined, unknown $names as missing", () -> {
+            VariableResolver r = ctx().resolverFor(null);
+            return r.isDefined("$guid") && r.isDefined("$isoTimestamp") && !r.isDefined("$randomEmail");
+        });
+        url(t, "{{baseUrl}}/echo/dyn/{{$randomEmail}}");
+        send(t);
+        check("An unknown built-in is reported and sent as written", () -> responseSays(t, "Not defined: $randomEmail")
+                && lastSeen().path().contains("%7B%7B$randomEmail%7D%7D"));
+        run("copyCurl");
+        verify("Copy as cURL fills built-ins in", clipboard().matches("(?s).*X-Request-Id: " + uuid + ".*"), clipboard());
+    }
+
+    // ------------------------------------------------------------------ uploads
+
+    private static void uploads() {
+        section("File uploads: multipart form-data and file bodies");
+        Path text = home.resolve("upload note.txt");
+        Path data = home.resolve("payload.json");
+        try {
+            Files.writeString(text, "hello from a file");
+            Files.writeString(data, "{\"from\":\"disk\"}");
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException(e);
+        }
+        RequestTab t = newTab();
+        method(t, HttpMethod.POST);
+        url(t, "{{baseUrl}}/echo/upload");
+        Ui.Segmented bt = field(t, "bodyType");
+        KeyValueTable parts = field(t, "multipartTable");
+        edt(() -> ((UnderlineTabs) field(t, "editorTabs")).setSelectedIndex(2));
+        segment(bt, BodyType.MULTIPART.ordinal());
+        check("Multipart shows its own table with a Type column", () -> parts.isShowing() && parts.table().getColumnCount() == 5
+                && "Type".equals(parts.table().getColumnName(3)));
+        edt(() -> parts.setRows(List.of(kv("user", "id-{{userId}}", true), kv("off", "no", false))));
+        // pick the file through the Type menu, as a person would
+        FileChoosers.testPicker = (title, name) -> text.toFile();
+        edt(() -> invoke(parts, "chooseFile", 2));
+        check("Choosing a file makes the row a file row with its path", () -> parts.getRows().size() == 3
+                && parts.getRows().get(2).file && parts.getRows().get(2).value.equals(text.toString()));
+        edt(() -> {
+            List<KeyValue> rows = parts.getRows();
+            rows.get(2).key = "attachment";
+            parts.setRows(rows);
+            invoke(t, "changed");
+        });
+        check("The Body tab says Multipart", () -> {
+            UnderlineTabs tabs = field(t, "editorTabs");
+            return tabs.getTitleAt(2).equals("Body · Multipart");
+        });
+        HistoryEntry h = send(t);
+        Seen seen = lastSeen();
+        String ct = String.valueOf(seen.header("Content-Type"));
+        verify("Content-Type is multipart/form-data with a boundary", ct.matches("multipart/form-data; boundary=----RestClientBoundary[0-9a-f]{24}"), ct);
+        String boundary = ct.substring(ct.indexOf('=') + 1);
+        verify("The text part arrives with its variable resolved", seen.body().contains("--" + boundary + "\r\nContent-Disposition: form-data; name=\"user\"\r\n\r\nid-42\r\n"), seen.body());
+        verify("The file part arrives with its name, type and contents", seen.body().contains(
+                "Content-Disposition: form-data; name=\"attachment\"; filename=\"upload note.txt\"\r\nContent-Type: text/plain\r\n\r\nhello from a file\r\n--" + boundary + "--"), seen.body());
+        verify("Disabled parts are not sent", !seen.body().contains("name=\"off\""), seen.body());
+        verify("History shows the file by name, not its contents", h.sentBody.contains("(contents of upload note.txt") && !h.sentBody.contains("hello from a file")
+                && h.sentHeaders.stream().anyMatch(k -> k.value.equals(ct)), h.sentBody);
+        check("The Request view shows the same outline", () -> {
+            String sent = field(response(t), "sentText");
+            return sent.contains("(contents of upload note.txt") && sent.contains("boundary=" + boundary) && sent.contains("name=\"user\"");
+        });
+
+        run("copyCurl");
+        verify("Copy as cURL uses -F with @ for the file", clipboard().contains("-F 'user=id-42'")
+                && clipboard().contains("-F 'attachment=@" + text + "'"), clipboard());
+        String curl = clipboard();
+        edt(() -> parts.setRows(List.of(KeyValue.file("attachment", home.resolve("gone.bin").toString(), true))));
+        edt(() -> invoke(t, "changed"));
+        edt(() -> ((UnderlineTabs) field(t, "editorTabs")).setSelectedIndex(0));
+        int before = SEEN.size();
+        edt(t::send);
+        check("A missing file is reported instead of sending", () -> responseSays(t, "no file at") && SEEN.size() == before);
+        check("...and the Body tab is shown, not the URL outlined", () -> ((UnderlineTabs) field(t, "editorTabs")).getSelectedIndex() == 2
+                && ((javax.swing.JComponent) field(t, "requestGroup")).getClientProperty("JComponent.outline") == null);
+
+        // one file as the whole body
+        segment(bt, BodyType.BINARY.ordinal());
+        JTextComponent path = field(t, "bodyFile");
+        check("File shows a path field and a Choose File button", () -> path.isShowing() && visibleButton("Choose File…") != null);
+        FileChoosers.testPicker = (title, name) -> data.toFile();
+        press("Choose File…");
+        check("Choose File fills in the path", () -> path.getText().equals(data.toString()));
+        FileChoosers.testPicker = null;
+        method(t, HttpMethod.PUT);
+        HistoryEntry hb = send(t);
+        verify("The file is the body, byte for byte", lastSeen().body().equals("{\"from\":\"disk\"}") && lastSeen().method().equals("PUT"), lastSeen().body());
+        verify("Content-Type comes from the extension", "application/json".equals(lastSeen().header("Content-Type")), lastSeen().header("Content-Type"));
+        verify("History names the file", hb.sentBody.startsWith("(contents of payload.json"), hb.sentBody);
+        KeyValueTable headers = field(t, "headersTable");
+        edt(() -> headers.setRows(List.of(kv("Content-Type", "application/x-thing", true))));
+        send(t);
+        verify("A Content-Type you set wins", "application/x-thing".equals(lastSeen().header("Content-Type")), lastSeen().header("Content-Type"));
+        edt(() -> path.setText(home + "/{{payloadName}}"));
+        call(() -> {
+            ctx().repo.globals().variables.add(new Variable("payloadName", "payload.json"));
+            ctx().repo.saveEnvironment(ctx().repo.globals());
+            return null;
+        });
+        send(t);
+        verify("Variables work in the path", lastSeen().body().equals("{\"from\":\"disk\"}"), lastSeen().body());
+        run("copyCurl");
+        verify("Copy as cURL uses --data-binary @file", clipboard().contains("--data-binary '@" + data + "'"), clipboard());
+        edt(() -> path.setText(""));
+        int n = SEEN.size();
+        edt(t::send);
+        check("No file chosen is reported", () -> responseSays(t, "Choose a file to send") && SEEN.size() == n);
+        check("Unsaved-changes tracking sees upload fields", () -> t.isDirty());
+
+        // round trip through cURL, in a new tab
+        RequestTab pasted = newTab();
+        edt(() -> frame.importCurlInto(pasted, curl));
+        check("Importing that cURL gives a multipart body again", () -> pasted.draft().bodyType == BodyType.MULTIPART
+                && pasted.draft().multipart.size() == 2 && pasted.draft().multipart.get(1).file);
+        send(pasted);
+        verify("...and it uploads the same file", lastSeen().body().contains("hello from a file") && lastSeen().body().contains("name=\"user\""), lastSeen().body());
+    }
+
+    // ------------------------------------------------------------------ captures
+
+    private static void captures() {
+        section("Capture: save values from a response into variables");
+        RequestTab t = newTab();
+        method(t, HttpMethod.POST);
+        url(t, "{{baseUrl}}/login");
+        UnderlineTabs tabs = field(t, "editorTabs");
+        KeyValueTable rules = field(t, "capturesTable");
+        check("There is a Capture tab with its own column titles", () -> tabs.getTitleAt(4).equals("Capture")
+                && "Save to variable".equals(String.valueOf(rules.table().getColumnModel().getColumn(1).getHeaderValue())));
+        edt(() -> tabs.setSelectedIndex(4));
+        edt(() -> rules.setRows(List.of(kv("token", "body.data.token", true), kv("lastId", "data.items[-1].id", true),
+                kv("where", "header.Location", true), kv("sid", "cookie.session", true), kv("code", "status", true),
+                kv("userId", "$.data.items[0].id", true), kv("missing", "body.data.nope", true), kv("skipped", "status", false))));
+        edt(() -> invoke(t, "changed"));
+        check("The tab counts the enabled rules", () -> tabs.getTitleAt(4).equals("Capture 7"));
+        Environment staging = env("Staging");
+        send(t);
+        java.util.function.Function<String, String> stagingVar = name -> call(() -> staging.variables.stream()
+                .filter(v -> v.key.equals(name)).map(v -> v.value).findFirst().orElse(null));
+        verify("A JSON value updates the existing variable", "tok-fresh-1".equals(stagingVar.apply("token")), stagingVar.apply("token"));
+        check("...which stays secret", () -> staging.variables.stream().anyMatch(v -> v.key.equals("token") && v.secret));
+        verify("New variables go into the active environment", "8".equals(stagingVar.apply("lastId")) && "/users/7".equals(stagingVar.apply("where"))
+                && "sess-9".equals(stagingVar.apply("sid")) && "201".equals(stagingVar.apply("code")),
+                stagingVar.apply("lastId") + " " + stagingVar.apply("where") + " " + stagingVar.apply("sid") + " " + stagingVar.apply("code"));
+        verify("A variable is updated where it's defined (the environment wins)", "7".equals(stagingVar.apply("userId")), stagingVar.apply("userId"));
+        check("A rule that finds nothing says why, and saves nothing", () -> responseSays(t, "Nothing saved to missing: there's no “nope” in data")
+                && stagingVar.apply("missing") == null);
+        check("A switched-off rule does nothing", () -> stagingVar.apply("skipped") == null);
+        check("The status bar says what was saved", () -> anyLabel(frame.getContentPane(), x -> x.startsWith("Saved 6 values to Staging")));
+        call(() -> {
+            ctx().repo.flush();
+            return null;
+        });
+        check("The values are written to disk", () -> {
+            try (java.util.stream.Stream<Path> files = Files.walk(ctx().repo.paths().environments())) {
+                return files.filter(Files::isRegularFile).anyMatch(f -> readFile(f).contains("sess-9"));
+            }
+        });
+
+        // the next request uses what was captured
+        RequestTab next = newTab();
+        url(next, "{{baseUrl}}/echo/users/{{lastId}}");
+        JComboBox<?> authType = field(next, "authType");
+        JTextComponent token = field(next, "authToken");
+        edt(() -> authType.setSelectedIndex(2));
+        edt(() -> token.setText("{{token}}"));
+        send(next);
+        verify("The next request sends the captured values", lastSeen().path().equals("/echo/users/8")
+                && "Bearer tok-fresh-1".equals(lastSeen().header("Authorization")), lastSeen().toString());
+
+        check("After a response, the source column suggests what's in it", () -> {
+            List<String> s = invoke(t, "captureSuggestions", "tok");
+            return s.contains("body.data.token");
+        });
+
+        // with no environment selected, new variables go to Globals
+        edt(() -> {
+            ctx().repo.setActiveEnvironment(null);
+            frame.variablesChanged();
+        });
+        edt(() -> rules.setRows(List.of(kv("fromGlobals", "body.ok", true))));
+        edt(() -> invoke(t, "changed"));
+        send(t);
+        check("With no environment, a new variable goes into Globals", () -> ctx().repo.globals().variables.stream()
+                .anyMatch(v -> v.key.equals("fromGlobals") && v.value.equals("true")));
+        edt(() -> {
+            ctx().repo.setActiveEnvironment(staging);
+            frame.variablesChanged();
+        });
+
+        // captured into a collection variable when that's where it lives
+        ApiCollection seedApi = collection("Seed API");
+        call(() -> {
+            seedApi.variables.add(new Variable("colOnly", "old"));
+            ctx().repo.saveCollection(seedApi);
+            return null;
+        });
+        CollectionNode get = call(() -> seedApi.items.get(0).children.get(0));
+        edt(() -> frame.openSaved(seedApi, get, false));
+        RequestTab saved = currentTab();
+        KeyValueTable savedRules = field(saved, "capturesTable");
+        edt(() -> savedRules.setRows(List.of(kv("colOnly", "body.method", true))));
+        edt(() -> invoke(saved, "changed"));
+        check("Adding a rule marks the request as changed", saved::isDirty);
+        send(saved);
+        check("A collection variable is updated in the collection", () -> seedApi.variables.stream()
+                .anyMatch(v -> v.key.equals("colOnly") && v.value.equals("GET")));
+        edt(() -> frame.saveTab(saved, false));
+        call(() -> {
+            ctx().repo.flush();
+            return null;
+        });
+        check("Rules are saved with the request", () -> get.request.captures.size() == 1 && get.request.captures.get(0).value.equals("body.method")
+                && !saved.isDirty());
+        edt(() -> savedRules.setRows(List.of()));
+        edt(() -> invoke(saved, "changed"));
+        edt(() -> frame.saveTab(saved, false));
+
+        // a failed request captures nothing
+        url(t, "http://127.0.0.1:1/nothing-listens-here");
+        edt(() -> rules.setRows(List.of(kv("code", "status", true))));
+        edt(() -> invoke(t, "changed"));
+        send(t);
+        verify("A failed request leaves variables alone", "201".equals(stagingVar.apply("code")), stagingVar.apply("code"));
+    }
+
+    // ------------------------------------------------------------------ copy as code
+
+    private static void copyAsCode() {
+        section("Copy as Code: Java, Python, JavaScript, PowerShell");
+        RequestTab t = newTab();
+        method(t, HttpMethod.POST);
+        url(t, "{{baseUrl}}/echo/code?id={{userId}}");
+        KeyValueTable headers = field(t, "headersTable");
+        edt(() -> headers.setRows(List.of(kv("X-Note", "it's \"quoted\"", true), kv("X-Off", "0", false))));
+        Ui.Segmented bt = field(t, "bodyType");
+        CodeArea editor = field(t, "bodyEditor");
+        segment(bt, BodyType.JSON.ordinal());
+        edt(() -> editor.setText("{\"a\": \"b\"}"));
+        JComboBox<?> authType = field(t, "authType");
+        JTextComponent token = field(t, "authToken");
+        edt(() -> authType.setSelectedIndex(2));
+        edt(() -> token.setText("{{token}}"));
+        String target = http + "/echo/code?id=7";
+
+        check("The Request menu has a Copy as Code submenu with four languages", () -> {
+            javax.swing.JMenu request = frame.getJMenuBar().getMenu(3);
+            for (int i = 0; i < request.getItemCount(); i++) {
+                if (request.getItem(i) instanceof javax.swing.JMenu m && m.getText().equals("Copy as Code")) {
+                    return m.getItemCount() == 4 && m.getItem(0).getText().equals("Java (HttpClient)") && m.getItem(3).getText().equals("PowerShell");
+                }
+            }
+            return false;
+        });
+        check("The request's More menu has it too", () -> {
+            javax.swing.JPopupMenu m = invoke(t, "moreMenu");
+            for (Component c : m.getComponents()) if (c instanceof javax.swing.JMenu sub && sub.getText().equals("Copy as Code")) return sub.getItemCount() == 4;
+            return false;
+        });
+
+        run("copyCodeJAVA");
+        String java = clipboard();
+        verify("Java: resolved URL, headers, bearer token and body as escaped literals", java.contains("URI.create(\"" + target + "\")")
+                && java.contains(".header(\"X-Note\", \"it's \\\"quoted\\\"\")") && java.contains("Bearer tok-fresh-1")
+                && java.contains("BodyPublishers.ofString(\"{\\\"a\\\": \\\"b\\\"}\")") && !java.contains("X-Off"), java);
+        check("...and the status bar confirms", () -> anyLabel(frame.getContentPane(), x -> x.equals("Copied as Java (HttpClient)")));
+        javax.tools.JavaCompiler javac = javax.tools.ToolProvider.getSystemJavaCompiler();
+        if (javac != null) {
+            try {
+                Path dir = Files.createTempDirectory("rc-gen");
+                Files.writeString(dir.resolve("Main.java"), java);
+                verify("The generated Java compiles", javac.run(null, null, new ByteArrayOutputStream(), "-d", dir.toString(), dir.resolve("Main.java").toString()) == 0, java);
+                // run it against the test server: the real proof that it sends the same request
+                Process pr = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(), "-cp", dir.toString(), "Main")
+                        .redirectErrorStream(true).start();
+                String out = new String(pr.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+                pr.waitFor();
+                Seen seen = lastSeen();
+                verify("Running it sends the same request", seen.path().equals("/echo/code?id=7") && seen.method().equals("POST")
+                        && seen.body().equals("{\"a\": \"b\"}") && "it's \"quoted\"".equals(seen.header("X-Note"))
+                        && "Bearer tok-fresh-1".equals(seen.header("Authorization")) && out.contains("200"), seen + " / " + out);
+            } catch (Exception e) {
+                verify("The generated Java runs", false, e.toString());
+            }
+        }
+        run("copyCodePYTHON");
+        verify("Python: requests.request with headers dict and encoded body", clipboard().startsWith("import requests")
+                && clipboard().contains("\"" + target + "\",") && clipboard().contains("\"X-Note\": \"it's \\\"quoted\\\"\",")
+                && clipboard().contains(".encode(\"utf-8\")"), clipboard());
+        run("copyCodeJAVASCRIPT");
+        verify("JavaScript: fetch with method, headers and body", clipboard().contains("await fetch(\"" + target + "\", {")
+                && clipboard().contains("method: \"POST\"") && clipboard().contains("[\"Authorization\", \"Bearer tok-fresh-1\"]"), clipboard());
+        run("copyCodePOWERSHELL");
+        verify("PowerShell: Invoke-WebRequest with doubled quotes", clipboard().contains("Invoke-WebRequest") && clipboard().contains("-Uri '" + target + "'")
+                && clipboard().contains("'X-Note' = 'it''s \"quoted\"'") && clipboard().contains("-ContentType 'application/json'"), clipboard());
+    }
+
+    // ------------------------------------------------------------------ OpenAPI
+
+    private static void openApi() {
+        section("OpenAPI and Swagger import (YAML and JSON)");
+        Path yaml = home.resolve("shop-api.yaml");
+        Path json = home.resolve("legacy.swagger.json");
+        Path bad = home.resolve("broken.yaml");
+        try {
+            Files.writeString(yaml, """
+                    openapi: 3.0.3
+                    info:
+                      title: Shop OpenAPI   # a comment
+                      version: "1.0"
+                    servers:
+                      - url: %s/echo/oas/
+                    tags:
+                      - name: orders
+                    security:
+                      - bearer: []
+                    paths:
+                      /orders:
+                        get:
+                          tags: [orders]
+                          summary: List orders
+                          parameters:
+                            - { name: status, in: query, required: true, schema: { type: string, enum: [open, closed] } }
+                            - { name: page, in: query, schema: { type: integer, default: 1 } }
+                            - { name: X-Tenant, in: header, required: true, example: acme }
+                        post:
+                          tags: [orders]
+                          summary: Create order
+                          requestBody:
+                            content:
+                              application/json:
+                                schema:
+                                  $ref: '#/components/schemas/Order'
+                      /orders/{orderId}:
+                        get:
+                          summary: Get order
+                          security: []
+                          parameters:
+                            - name: orderId
+                              in: path
+                              required: true
+                              example: 55
+                              schema:
+                                type: integer
+                      /orders/{orderId}/receipt:
+                        post:
+                          summary: Upload receipt
+                          requestBody:
+                            content:
+                              multipart/form-data:
+                                schema:
+                                  type: object
+                                  properties:
+                                    note: { type: string, example: paid }
+                                    receipt: { type: string, format: binary }
+                    components:
+                      securitySchemes:
+                        bearer:
+                          type: http
+                          scheme: bearer
+                      schemas:
+                        Order:
+                          type: object
+                          properties:
+                            id: { type: integer, readOnly: true }
+                            sku: { type: string, example: MUG-1 }
+                            qty: { type: integer }
+                            notes:
+                              type: array
+                              items: { type: string }
+                    """.formatted(http));
+            Files.writeString(json, "{\"swagger\":\"2.0\",\"info\":{\"title\":\"Legacy\"},\"host\":\"" + http.substring(7)
+                    + "\",\"basePath\":\"/echo/v2\",\"schemes\":[\"http\"],\"paths\":{\"/ping\":{\"get\":{\"summary\":\"Ping\","
+                    + "\"parameters\":[{\"in\":\"query\",\"name\":\"q\",\"type\":\"string\",\"required\":true,\"default\":\"x\"}]}}}}");
+            Files.writeString(bad, "openapi: 3.0.0\npaths:\n\t/x: {}\n");
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException(e);
+        }
+        check("File menu has Import OpenAPI or Swagger", () -> {
+            javax.swing.JMenu file = frame.getJMenuBar().getMenu(0);
+            for (int i = 0; i < file.getItemCount(); i++) if (file.getItem(i) != null && "Import OpenAPI or Swagger…".equals(file.getItem(i).getText())) return true;
+            return false;
+        });
+        check("The sidebar's Import menu has it too", () -> {
+            javax.swing.JPopupMenu m = invoke(((Sidebar) field(frame, "sidebar")).collections(), "importMenu");
+            for (Component c : m.getComponents()) if (c instanceof javax.swing.JMenuItem i && "OpenAPI or Swagger File…".equals(i.getText())) return true;
+            return false;
+        });
+        FileChoosers.testPicker = (title, name) -> title.contains("OpenAPI") ? yaml.toFile() : null;
+        run("importOpenApi");
+        FileChoosers.testPicker = null;
+        ApiCollection shop = collection("Shop OpenAPI");
+        check("A YAML file becomes a collection: a folder per tag, the rest at the top", () -> shop != null && shop.items.size() == 3
+                && shop.items.get(0).folder && shop.items.get(0).name.equals("orders") && shop.items.get(0).children.size() == 2);
+        check("...with a status message", () -> anyLabel(frame.getContentPane(), x -> x.startsWith("Imported “Shop OpenAPI”: 4 requests in 1 folder")));
+        check("baseUrl, path parameters and the token become collection variables", () -> {
+            Map<String, String> v = new LinkedHashMap<>();
+            shop.variables.forEach(x -> v.put(x.key, x.value));
+            return (http + "/echo/oas").equals(v.get("baseUrl")) && "55".equals(v.get("orderId")) && v.containsKey("token");
+        });
+        CollectionNode list = call(() -> shop.items.get(0).children.get(0));
+        edt(() -> frame.openSaved(shop, list, false));
+        RequestTab t = currentTab();
+        check("Optional parameters are listed, switched off", () -> {
+            KeyValueTable p = field(t, "paramsTable");
+            return p.getRows().stream().anyMatch(k -> k.key.equals("page") && k.value.equals("1") && !k.enabled)
+                    && p.getRows().stream().anyMatch(k -> k.key.equals("status") && k.value.equals("open") && k.enabled);
+        });
+        send(t);
+        verify("An imported operation runs: server, path, required query, header and bearer auth", lastSeen().path().equals("/echo/oas/orders?status=open")
+                && "acme".equals(lastSeen().header("X-Tenant")) && "Bearer tok-fresh-1".equals(lastSeen().header("Authorization")), lastSeen().toString());
+
+        CollectionNode create = call(() -> shop.items.get(0).children.get(1));
+        edt(() -> frame.openSaved(shop, create, false));
+        RequestTab c = currentTab();
+        send(c);
+        verify("A JSON body is made from the schema (examples used, read-only fields left out)", lastSeen().method().equals("POST")
+                && lastSeen().body().replaceAll("\\s", "").equals("{\"sku\":\"MUG-1\",\"qty\":0,\"notes\":[\"string\"]}"), lastSeen().body());
+
+        CollectionNode getOne = call(() -> shop.items.get(1));
+        edt(() -> frame.openSaved(shop, getOne, false));
+        send(currentTab());
+        verify("Path parameters come from collection variables; security: [] sends no auth", lastSeen().path().equals("/echo/oas/orders/55")
+                && lastSeen().header("Authorization") == null, lastSeen().toString());
+        check("An upload operation becomes a multipart body with a file row to fill in", () -> {
+            RequestDef r = shop.items.get(2).request;
+            return r.bodyType == BodyType.MULTIPART && r.multipart.size() == 2 && r.multipart.get(0).value.equals("paid")
+                    && r.multipart.get(1).file && r.multipart.get(1).value.isEmpty();
+        });
+
+        edt(() -> frame.importOpenApi(json));
+        ApiCollection legacy = collection("Legacy");
+        check("A Swagger 2 JSON file imports too", () -> legacy != null && legacy.items.size() == 1 && legacy.items.get(0).name.equals("Ping"));
+        edt(() -> frame.openSaved(legacy, legacy.items.get(0), false));
+        send(currentTab());
+        verify("...and runs against host + basePath", lastSeen().path().equals("/echo/v2/ping?q=x"), lastSeen().path());
+
+        // either import item accepts either kind of file
+        edt(() -> frame.importPostman(yaml));
+        check("An OpenAPI file picked through “Import from Postman” still imports", () -> collection("Shop OpenAPI (2)") != null);
+        Path postmanFile = home.resolve("shop.postman_collection.json");
+        int collections = call(() -> ctx().repo.collections().size());
+        edt(() -> frame.importOpenApi(postmanFile));
+        check("A Postman file picked through “Import OpenAPI” still imports", () -> ctx().repo.collections().size() == collections + 1);
+
+        later(() -> frame.importOpenApi(bad));
+        check("A file that can't be read says where the problem is", () -> dialogShowing(d -> anyLabel(d, x -> x.contains("line 3") && x.contains("tab"))));
+        closeDialogs();
+        refocus();
+        check("...and adds nothing", () -> ctx().repo.collections().size() == collections + 1);
+    }
+
     private static void sampleCollection() {
         section("The sample collection: Help › Add Sample Collection, then every request against a local httpbin");
         edt(frame::addSampleCollection);
         ApiCollection sample = collection(dev.restclient.store.Samples.NAME);
-        check("Help › Add Sample Collection adds it", () -> sample != null && sample.items.size() == 7);
+        check("Help › Add Sample Collection adds it", () -> sample != null && sample.items.size() == 8);
         check("...with the local httpbin environment", () -> env(dev.restclient.store.Samples.LOCAL_ENV) != null);
         if (sample == null) return;
         // point the sample's own local environment at our httpbin stand-in, and use it
@@ -2018,6 +2516,25 @@ public final class FeatureCheck {
         edt(() -> frame.openSaved(sample, switching, false));
         send(currentTab());
         verify("With the local environment, userId comes from it (42)", lastSeen().path().endsWith("/users/42"), lastSeen().path());
+        CollectionNode cap = node(sample.items, "Capture a value");
+        edt(() -> frame.openSaved(sample, cap, false));
+        send(currentTab());
+        String captured = call(() -> sample.variables.stream().filter(v -> v.key.equals("sampleUuid")).map(v -> v.value).findFirst().orElse(""));
+        verify("The capture sample saves the UUID into the collection's own variable", captured.matches("[0-9a-f-]{36}"), captured);
+        CollectionNode use = node(sample.items, "Use the captured value");
+        edt(() -> frame.openSaved(sample, use, false));
+        send(currentTab());
+        verify("...and the next sample sends it", lastSeen().path().equals("/hb/anything/" + captured), lastSeen().path());
+        CollectionNode builtIn = node(sample.items, "Built-in variables");
+        edt(() -> frame.openSaved(sample, builtIn, false));
+        send(currentTab());
+        verify("The built-ins sample sends generated values", lastSeen().path().matches("/hb/post\\?requestId=[0-9a-f-]{36}")
+                && lastSeen().body().matches("(?s).*\"seconds\": \\d{10},.*") && !lastSeen().body().contains("{{"), lastSeen().path() + " " + lastSeen().body());
+        CollectionNode mp = node(sample.items, "Multipart form");
+        edt(() -> frame.openSaved(sample, mp, false));
+        send(currentTab());
+        verify("The multipart sample sends a multipart body", String.valueOf(lastSeen().header("Content-Type")).startsWith("multipart/form-data; boundary=")
+                && lastSeen().body().contains("name=\"title\"\r\n\r\nHello from demo"), lastSeen().body());
         CollectionNode redirect = node(sample.items, "Redirects (3 hops)");
         edt(() -> frame.openSaved(sample, redirect, false));
         int before = SEEN.size();
@@ -2044,7 +2561,7 @@ public final class FeatureCheck {
                 sample.forEachRequest(x -> a[0]++);
                 if (imported == null) return false;
                 imported.forEachRequest(x -> b[0]++);
-                return a[0] == b[0] && imported.items.size() == 7;
+                return a[0] == b[0] && imported.items.size() == 8;
             });
         }
     }
@@ -2164,8 +2681,9 @@ public final class FeatureCheck {
                 return s.anyMatch(p -> p.getFileName().toString().matches(".*\\.(pem|crt|cer)"));
             }
         });
-        check("Environments and their secrets are there", () -> env("Staging") != null && env("Staging").variables.stream()
-                .anyMatch(v -> v.key.equals("token") && v.secret && v.value.equals("secret-abc-123")));
+        // the token is the one the Capture section saved over the seeded value: captured values survive a restart
+        check("Environments and their secrets are there, with captured values", () -> env("Staging") != null && env("Staging").variables.stream()
+                .anyMatch(v -> v.key.equals("token") && v.secret && v.value.equals("tok-fresh-1")));
         check("No load warnings", () -> ctx().repo.loadWarnings().isEmpty());
     }
 }

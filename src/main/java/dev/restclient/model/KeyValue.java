@@ -7,6 +7,8 @@ public class KeyValue {
     public boolean enabled = true;
     public String key = "";
     public String value = "";
+    /** Multipart form rows only: the value is the path of a file to upload rather than text. */
+    public boolean file;
 
     public KeyValue() {
     }
@@ -21,8 +23,17 @@ public class KeyValue {
         this.enabled = enabled;
     }
 
+    /** A multipart file part: {@code path} is the file to upload. */
+    public static KeyValue file(String key, String path, boolean enabled) {
+        KeyValue kv = new KeyValue(key, path, enabled);
+        kv.file = true;
+        return kv;
+    }
+
     public KeyValue copy() {
-        return new KeyValue(key, value, enabled);
+        KeyValue kv = new KeyValue(key, value, enabled);
+        kv.file = file;
+        return kv;
     }
 
     public boolean isBlank() {
@@ -32,12 +43,12 @@ public class KeyValue {
     @Override
     public boolean equals(Object o) {
         if (!(o instanceof KeyValue kv)) return false;
-        return enabled == kv.enabled && Objects.equals(key, kv.key) && Objects.equals(value, kv.value);
+        return enabled == kv.enabled && file == kv.file && Objects.equals(key, kv.key) && Objects.equals(value, kv.value);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(enabled, key, value);
+        return Objects.hash(enabled, key, value, file);
     }
 
     @Override

@@ -229,6 +229,7 @@ public class CollectionsPanel extends JPanel {
         curl.addActionListener(e -> frame.showCurlImport(null));
         m.add(curl);
         item(m, "Postman Collection or Environment…", frame::importPostman);
+        item(m, "OpenAPI or Swagger File…", frame::importOpenApi);
         m.addSeparator();
         item(m, "Sample Collection", frame::addSampleCollection);
         return m;

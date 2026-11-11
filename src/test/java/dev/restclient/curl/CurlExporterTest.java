@@ -145,4 +145,38 @@ class CurlExporterTest {
         String cmd = CurlExporter.export(r, new VariableResolver(null, c, null), false);
         assertEquals("https://col.example/x", CurlParser.parse(cmd).request().url);
     }
+
+    @Test
+    void multipartAndFileBodiesRoundTrip() throws Exception {
+        RequestDef r = new RequestDef();
+        r.method = HttpMethod.POST;
+        r.url = "https://x.test/up";
+        r.bodyType = BodyType.MULTIPART;
+        r.headers.add(new KeyValue("Content-Type", "multipart/form-data"));
+        r.multipart.add(new KeyValue("name", "it's Ann"));
+        r.multipart.add(new KeyValue("at", "@home; really"));
+        r.multipart.add(KeyValue.file("photo", "/tmp/a b.png", true));
+        r.multipart.add(KeyValue.file("odd", "/tmp/x;y,z.bin", true));
+        r.multipart.add(new KeyValue("off", "x", false));
+        String cmd = CurlExporter.export(r, null, false);
+        assertTrue(cmd.contains("-F 'name=it'\\''s Ann'"), cmd);
+        assertTrue(cmd.contains("--form-string 'at=@home; really'"), cmd);
+        assertTrue(cmd.contains("-F 'photo=@/tmp/a b.png'"), cmd);
+        assertTrue(cmd.contains("-F 'odd=@\"/tmp/x;y,z.bin\"'"), cmd);
+        assertFalse(cmd.contains("Content-Type"), "curl writes the multipart header itself");
+        RequestDef back = CurlParser.parse(cmd).request();
+        assertEquals(BodyType.MULTIPART, back.bodyType);
+        assertEquals(r.multipart.subList(0, 4), back.multipart);
+
+        RequestDef f = new RequestDef();
+        f.method = HttpMethod.PUT;
+        f.url = "https://x.test/f";
+        f.bodyType = BodyType.BINARY;
+        f.bodyFile = "/tmp/report.pdf";
+        String fc = CurlExporter.export(f, null, false);
+        assertTrue(fc.contains("--data-binary '@/tmp/report.pdf'") && fc.contains("-H 'Content-Type: application/pdf'"), fc);
+        RequestDef fb = CurlParser.parse(fc).request();
+        assertEquals(BodyType.BINARY, fb.bodyType);
+        assertEquals("/tmp/report.pdf", fb.bodyFile);
+    }
 }

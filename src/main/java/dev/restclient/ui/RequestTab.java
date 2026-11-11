@@ -73,10 +73,15 @@ public class RequestTab extends JPanel {
     private final UnderlineTabs editorTabs = new UnderlineTabs();
     private final KeyValueTable paramsTable;
     private final KeyValueTable headersTable;
-    private final Ui.Segmented bodyType = new Ui.Segmented("None", "JSON", "XML", "Text", "Form");
+    private final Ui.Segmented bodyType = new Ui.Segmented("None", "JSON", "XML", "Text", "Form", "Multipart", "File");
     private final JButton beautify = Ui.button("Beautify", null);
     private final CodeArea bodyEditor = new CodeArea(10, 60);
     private final KeyValueTable formTable;
+    private final KeyValueTable multipartTable;
+    private final VarTextField bodyFile;
+    private final KeyValueTable capturesTable;
+    /** The last response, so the Capture tab can suggest what's in it. */
+    private ResponseData lastResponse;
     private final CardLayout bodyCards = new CardLayout();
     private final JPanel bodyCardPanel = new JPanel(bodyCards);
     private final JComboBox<String> authType = new JComboBox<>(new String[]{"No auth", "Basic", "Bearer token"});
@@ -114,6 +119,11 @@ public class RequestTab extends JPanel {
         headersTable = new KeyValueTable(this::resolver, frame, "Add header", "Value",
                 text -> suggest(COMMON_HEADERS, text), this::headerValueSuggestions);
         formTable = new KeyValueTable(this::resolver, frame, "Add field", "Value", null, null);
+        multipartTable = new KeyValueTable(this::resolver, frame, "Add field", "Value", null, null, true);
+        bodyFile = new VarTextField(this::resolver, frame, true).placeholder("Path of the file to send");
+        capturesTable = new KeyValueTable(this::resolver, frame, "Variable name", "status, header.Name, body.data.token…",
+                text -> suggest(new ArrayList<>(resolver().names()), text), (key, text) -> captureSuggestions(text))
+                .titles("Save to variable", "From the response");
         authUser = new VarTextField(this::resolver, frame, true).placeholder("Username");
         authPass = new VarTextField(this::resolver, frame, true).placeholder("Password");
         authToken = new VarTextField(this::resolver, frame, true).placeholder("Token, e.g. {{token}}");
@@ -238,6 +248,7 @@ public class RequestTab extends JPanel {
         editorTabs.addTab("Headers", pad(headersTable));
         editorTabs.addTab("Body", buildBody());
         editorTabs.addTab("Auth", buildAuth());
+        editorTabs.addTab("Capture", buildCapture());
         editorTabs.addTab("Settings", buildSettings());
         return editorTabs;
     }
@@ -268,8 +279,51 @@ public class RequestTab extends JPanel {
         bodyCardPanel.add(none, "none");
         bodyCardPanel.add(sp, "raw");
         bodyCardPanel.add(formTable, "form");
+        bodyCardPanel.add(multipartTable, "multipart");
+        bodyCardPanel.add(buildBinary(), "binary");
         p.add(bodyCardPanel, BorderLayout.CENTER);
         return p;
+    }
+
+    private JPanel buildBinary() {
+        JPanel p = Ui.transparent(new BorderLayout());
+        JButton choose = Ui.button("Choose File…", e -> {
+            java.io.File f = FileChoosers.open(this, "Choose a File to Send");
+            if (f != null) bodyFile.setText(f.getPath());
+        });
+        bodyFile.getAccessibleContext().setAccessibleName("File to send");
+        JPanel line = Ui.transparent(new BorderLayout(8, 0));
+        line.add(bodyFile, BorderLayout.CENTER);
+        line.add(choose, BorderLayout.EAST);
+        JPanel box = Ui.transparent(new BorderLayout(0, 8));
+        box.add(line, BorderLayout.NORTH);
+        box.add(Ui.small("The file is sent as the whole body. Content-Type comes from its extension unless you set the header yourself."),
+                BorderLayout.CENTER);
+        p.add(box, BorderLayout.NORTH);
+        return p;
+    }
+
+    private JPanel buildCapture() {
+        JPanel p = new JPanel(new BorderLayout(0, 8));
+        p.setBorder(Ui.pad(8, 14, 10, 14));
+        p.add(capturesTable, BorderLayout.CENTER);
+        JLabel hint = Ui.small("<html>After each response, these values are saved into variables for later requests to use, "
+                + "such as a login token. A variable is updated where it's already defined; a new one goes into the active "
+                + "environment, or Globals if none is selected.<br>Sources: <b>status</b> · <b>header.Location</b> · "
+                + "<b>cookie.session</b> · <b>body</b> · <b>body.data.token</b> · <b>body.items[0].id</b></html>");
+        p.add(hint, BorderLayout.SOUTH);
+        return p;
+    }
+
+    /** What the Capture tab offers while typing a source: what the last response actually contains. */
+    private List<String> captureSuggestions(String text) {
+        String t = text.toLowerCase(Locale.ROOT);
+        List<String> out = new ArrayList<>();
+        for (String o : dev.restclient.capture.Capture.suggestions(lastResponse)) {
+            if (o.toLowerCase(Locale.ROOT).contains(t) && !o.equals(text)) out.add(o);
+            if (out.size() >= 40) break;
+        }
+        return out;
     }
 
     private JPanel buildAuth() {
@@ -354,8 +408,15 @@ public class RequestTab extends JPanel {
         dup.addActionListener(e -> frame.duplicateTab(this));
         JCheckBoxMenuItem skip = new JCheckBoxMenuItem("Skip TLS verification for this request", ctx.effectiveInsecure(draft));
         skip.addActionListener(e -> setInsecure(skip.isSelected()));
+        javax.swing.JMenu code = new javax.swing.JMenu("Copy as Code");
+        for (dev.restclient.codegen.CodeGen.Language l : dev.restclient.codegen.CodeGen.Language.values()) {
+            JMenuItem item = new JMenuItem(l.label);
+            item.addActionListener(e -> copyAsCode(l));
+            code.add(item);
+        }
         m.add(copy);
         m.add(copyVars);
+        m.add(code);
         m.addSeparator();
         m.add(save);
         m.add(saveAs);
@@ -382,6 +443,9 @@ public class RequestTab extends JPanel {
             bodyEditor.setText(draft.body == null ? "" : draft.body);
             VarSupport.discardEdits(bodyEditor);
             formTable.setRows(draft.form);
+            multipartTable.setRows(draft.multipart);
+            bodyFile.setText(draft.bodyFile == null ? "" : draft.bodyFile);
+            capturesTable.setRows(draft.captures);
             Auth a = draft.auth == null ? new Auth() : draft.auth;
             authType.setSelectedIndex(a.type.ordinal());
             authUser.setText(a.username);
@@ -438,6 +502,9 @@ public class RequestTab extends JPanel {
         paramsTable.onChange(this::paramsChanged);
         headersTable.onChange(this::changed);
         formTable.onChange(this::changed);
+        multipartTable.onChange(this::changed);
+        capturesTable.onChange(this::changed);
+        bodyFile.getDocument().addDocumentListener(docListener(this::changed));
         bodyEditor.getDocument().addDocumentListener(docListener(this::changed));
         bodyType.onChange(i -> {
             applyBodyType();
@@ -479,7 +546,8 @@ public class RequestTab extends JPanel {
 
     private void applyBodyType() {
         BodyType t = BodyType.values()[Math.max(0, bodyType.selectedIndex())];
-        bodyCards.show(bodyCardPanel, t == BodyType.NONE ? "none" : t == BodyType.FORM ? "form" : "raw");
+        bodyCards.show(bodyCardPanel, t == BodyType.NONE ? "none" : t == BodyType.FORM ? "form"
+                : t == BodyType.MULTIPART ? "multipart" : t == BodyType.BINARY ? "binary" : "raw");
         beautify.setVisible(t == BodyType.JSON || t == BodyType.XML);
         bodyEditor.setLanguage(t == BodyType.JSON ? CodeArea.Lang.JSON : t == BodyType.XML ? CodeArea.Lang.XML : CodeArea.Lang.NONE);
     }
@@ -561,6 +629,9 @@ public class RequestTab extends JPanel {
         draft.bodyType = BodyType.values()[Math.max(0, bodyType.selectedIndex())];
         draft.body = bodyEditor.getText();
         draft.form = formTable.getRows();
+        draft.multipart = multipartTable.getRows();
+        draft.bodyFile = bodyFile.getText();
+        draft.captures = capturesTable.getRows();
         if (draft.auth == null) draft.auth = new Auth();
         draft.auth.type = Auth.Type.values()[Math.max(0, authType.getSelectedIndex())];
         draft.auth.username = authUser.getText();
@@ -584,6 +655,8 @@ public class RequestTab extends JPanel {
         editorTabs.setTitleAt(2, draft.bodyType == BodyType.NONE ? "Body" : "Body · " + draft.bodyType.label);
         editorTabs.setTitleAt(3, draft.auth == null || draft.auth.type == Auth.Type.NONE ? "Auth"
                 : "Auth · " + (draft.auth.type == Auth.Type.BASIC ? "Basic" : "Bearer"));
+        int captures = capturesTable.enabledCount();
+        editorTabs.setTitleAt(4, captures > 0 ? "Capture " + captures : "Capture");
         boolean insecure = ctx.effectiveInsecure(draft);
         tlsBadge.setVisible(insecure && ctx.settings().showInsecureBadge);
         frame.tabStateChanged(this);
@@ -744,6 +817,8 @@ public class RequestTab extends JPanel {
         paramsTable.refreshVariables();
         headersTable.refreshVariables();
         formTable.refreshVariables();
+        multipartTable.refreshVariables();
+        bodyFile.refreshVariables();
     }
 
     public void settingsChanged() {
@@ -771,6 +846,13 @@ public class RequestTab extends JPanel {
         frame.status(resolved ? "Copied as cURL" : "Copied as cURL with {{variables}} kept", null, null);
     }
 
+    public void copyAsCode(dev.restclient.codegen.CodeGen.Language language) {
+        readUi();
+        String code = dev.restclient.codegen.CodeGen.generate(language, draft, resolver(), ctx.effectiveInsecure(draft));
+        Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(code), null);
+        frame.status("Copied as " + language.label, null, null);
+    }
+
     // ---- sending ---------------------------------------------------------------------------
 
     public boolean isSending() {
@@ -785,20 +867,29 @@ public class RequestTab extends JPanel {
         paramsTable.stopEditing();
         headersTable.stopEditing();
         formTable.stopEditing();
+        multipartTable.stopEditing();
+        capturesTable.stopEditing();
         readUi();
-        VariableResolver vars = resolver();
+        // recording: {{$guid}} and friends get their values here, and the copy kept for display reuses them
+        VariableResolver vars = resolver().recording();
         PreparedRequest p;
         try {
             p = PreparedRequest.prepare(draft, vars);
         } catch (PreparedRequest.InvalidRequestException e) {
-            // Point at the thing to fix: outline the URL and put the cursor there.
-            requestGroup.putClientProperty("JComponent.outline", "error");
-            requestGroup.repaint();
-            urlField.requestFocusInWindow();
+            if (e.urlProblem) {
+                // Point at the thing to fix: outline the URL and put the cursor there.
+                requestGroup.putClientProperty("JComponent.outline", "error");
+                requestGroup.repaint();
+                urlField.requestFocusInWindow();
+            } else {
+                editorTabs.setSelectedIndex(2);
+            }
             response.showError(ResponseData.failed(ResponseData.ErrorKind.INVALID, null, e.getMessage(), 0, null),
                     errorActions(), ctx.timeoutFor(draft), ctx.tls, List.of());
             return;
         }
+        RequestDef sent = draft.copy();
+        PreparedRequest shown = PreparedRequest.prepareMasked(sent, vars.replaying(), p);
         boolean insecure = ctx.effectiveInsecure(draft);
         call = ctx.http.send(p, insecure, ctx.timeoutFor(draft));
         setSending(true);
@@ -806,7 +897,7 @@ public class RequestTab extends JPanel {
         HttpService.Call mine = call;
         call.result().thenAccept(res -> SwingUtilities.invokeLater(() -> {
             if (call != mine) return;
-            done(p, res, vars);
+            done(p, shown, sent, res, vars);
         }));
     }
 
@@ -820,7 +911,7 @@ public class RequestTab extends JPanel {
         frame.tabStateChanged(this);
     }
 
-    private void done(PreparedRequest p, ResponseData res, VariableResolver vars) {
+    private void done(PreparedRequest p, PreparedRequest shown, RequestDef sent, ResponseData res, VariableResolver vars) {
         call = null;
         setSending(false);
         List<String> notes = new ArrayList<>(p.warnings);
@@ -831,11 +922,13 @@ public class RequestTab extends JPanel {
         if (res.isError()) {
             response.showError(res, errorActions(), ctx.timeoutFor(draft), ctx.tls, notes);
         } else {
-            PreparedRequest shown = PreparedRequest.prepareMasked(draft, vars);
+            lastResponse = res;
+            List<dev.restclient.capture.Capture.Outcome> captured = dev.restclient.capture.Capture.run(sent.captures, res);
+            notes.addAll(frame.storeCaptures(collectionId, captured));
             response.setSent(shown.method.name(), shown.url, shown.headers, shown.body);
             response.showResponse(res, notes, fileNameFor(p.uri));
         }
-        frame.recordHistory(historyEntry(res, vars));
+        frame.recordHistory(historyEntry(sent, shown, res, vars));
     }
 
     private ResponsePanel.ErrorActions errorActions() {
@@ -867,11 +960,10 @@ public class RequestTab extends JPanel {
         return last.isEmpty() ? "response" : last;
     }
 
-    private HistoryEntry historyEntry(ResponseData res, VariableResolver vars) {
+    private HistoryEntry historyEntry(RequestDef sent, PreparedRequest masked, ResponseData res, VariableResolver vars) {
         HistoryEntry h = new HistoryEntry();
         h.timestamp = System.currentTimeMillis();
-        h.request = draft.copy();
-        PreparedRequest masked = PreparedRequest.prepareMasked(draft, vars);
+        h.request = sent.copy();
         h.sentMethod = masked.method;
         h.sentUrl = masked.url;
         h.sentHeaders = masked.headers;

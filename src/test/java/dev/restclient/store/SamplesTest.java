@@ -23,7 +23,7 @@ class SamplesTest {
     @Test
     void theSampleCoversEveryFeatureArea() {
         ApiCollection c = Samples.httpbin();
-        assertEquals(7, c.items.size());
+        assertEquals(8, c.items.size());
         Set<HttpMethod> methods = EnumSet.noneOf(HttpMethod.class);
         int requests = 0;
         for (CollectionNode f : c.items) {
@@ -84,8 +84,10 @@ class SamplesTest {
         int[] original = {0};
         Samples.httpbin().forEachRequest(n -> original[0]++);
         assertEquals(original[0], r.requests());
-        assertEquals(7, r.folders());
-        assertTrue(r.notes().isEmpty(), "nothing lost: " + r.notes());
+        assertEquals(8, r.folders());
+        // the one note says the capture rules came back (as rules, from the script lines the export wrote)
+        assertEquals(1, r.notes().size(), "nothing lost: " + r.notes());
+        assertTrue(r.notes().get(0).contains("turned into Capture rules"), r.notes().get(0));
         assertEquals(Samples.NAME, back.name);
     }
 }

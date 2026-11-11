@@ -21,6 +21,10 @@ import java.util.regex.Pattern;
  *   <li>globals</li>
  * </ol>
  * Disabled variables are ignored. Values may themselves contain variables (resolved up to a fixed depth).
+ *
+ * <p>Names that start with {@code $} are the built-in {@link DynamicVars}: they can't be defined or overridden,
+ * and every occurrence gets a fresh value each time it's resolved. {@link #recording()} and {@link #replaying()}
+ * let the same generated values be used twice, for the request that is sent and the copy kept for display.
  */
 public final class VariableResolver {
     public enum Scope {
@@ -50,12 +54,49 @@ public final class VariableResolver {
 
     private final List<Layer> layers = new ArrayList<>();
     private final String environmentName;
+    /** Generated dynamic values, in order: appended to while recording, read back while replaying. */
+    private List<String> tape;
+    private int tapePosition = -1; // -1 = not replaying
 
     public VariableResolver(Environment environment, ApiCollection collection, Environment globals) {
         if (environment != null) layers.add(new Layer(Scope.ENVIRONMENT, environment.name, environment.variables));
         if (collection != null) layers.add(new Layer(Scope.COLLECTION, collection.name, collection.variables));
         if (globals != null) layers.add(new Layer(Scope.GLOBAL, "Globals", globals.variables));
         this.environmentName = environment == null ? null : environment.name;
+    }
+
+    private VariableResolver(VariableResolver from) {
+        layers.addAll(from.layers);
+        environmentName = from.environmentName;
+    }
+
+    /** A copy that remembers every dynamic value it hands out. */
+    public VariableResolver recording() {
+        VariableResolver r = new VariableResolver(this);
+        r.tape = new ArrayList<>();
+        return r;
+    }
+
+    /**
+     * A copy that hands out the values this (recording) resolver generated, in the same order, so resolving the
+     * same texts in the same order gives the same result. Once they run out, values are fresh again.
+     */
+    public VariableResolver replaying() {
+        VariableResolver r = new VariableResolver(this);
+        r.tape = tape == null ? new ArrayList<>() : new ArrayList<>(tape);
+        r.tapePosition = 0;
+        return r;
+    }
+
+    private String dynamic(String name) {
+        if (tape != null && tapePosition >= 0) {
+            // names aren't checked: the caller resolves the same texts in the same order
+            if (tapePosition < tape.size()) return tape.get(tapePosition++);
+            return DynamicVars.generate(name);
+        }
+        String v = DynamicVars.generate(name);
+        if (tape != null) tape.add(v);
+        return v;
     }
 
     public static VariableResolver empty() {
@@ -76,7 +117,7 @@ public final class VariableResolver {
     /** Every scope that defines the name, in precedence order (the first one wins). */
     public List<Resolution> lookupAll(String name) {
         List<Resolution> out = new ArrayList<>();
-        if (name == null) return out;
+        if (name == null || DynamicVars.isDynamic(name)) return out;
         for (Layer l : layers) {
             for (Variable v : l.vars) {
                 if (v.enabled && name.equals(v.key)) {
@@ -88,8 +129,9 @@ public final class VariableResolver {
         return out;
     }
 
+    /** True for user-defined variables and for the built-in dynamic ones. */
     public boolean isDefined(String name) {
-        return lookup(name).isPresent();
+        return DynamicVars.isDynamic(name) || lookup(name).isPresent();
     }
 
     /** Replaces every defined variable; undefined ones are left as {@code {{name}}}. */
@@ -117,8 +159,12 @@ public final class VariableResolver {
         Matcher m = VAR.matcher(text);
         StringBuilder sb = new StringBuilder();
         while (m.find()) {
-            Optional<Resolution> r = lookup(m.group(1));
             String replacement;
+            if (DynamicVars.isDynamic(m.group(1))) {
+                m.appendReplacement(sb, Matcher.quoteReplacement(dynamic(m.group(1))));
+                continue;
+            }
+            Optional<Resolution> r = lookup(m.group(1));
             if (r.isEmpty()) {
                 replacement = m.group(0);
             } else if (mask && r.get().secret()) {
@@ -136,7 +182,7 @@ public final class VariableResolver {
     public Set<String> unresolved(String text) {
         Set<String> out = new LinkedHashSet<>();
         if (text == null) return out;
-        for (Token t : tokens(resolve(text))) out.add(t.name());
+        for (Token t : tokens(new VariableResolver(this).resolve(text))) out.add(t.name());
         return out;
     }
 

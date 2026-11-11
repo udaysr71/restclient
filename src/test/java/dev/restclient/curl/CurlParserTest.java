@@ -153,4 +153,36 @@ class CurlParserTest {
         assertTrue(CurlParser.looksLikeCurl("CURL -X GET x"));
         assertFalse(CurlParser.looksLikeCurl("https://curl.se"));
     }
+
+    @Test
+    void formFieldsBecomeAMultipartBody() throws Exception {
+        CurlParser.Result r = parse("curl https://x.test/up -H 'Content-Type: multipart/form-data' -F name=Ann "
+                + "-F 'photo=@/tmp/my pic.png;type=image/png' -F 'doc=@\"/tmp/a;b.txt\"' --form-string 'note=@not a file' -F 'bio=<bio.txt'");
+        RequestDef q = r.request();
+        assertEquals(HttpMethod.POST, q.method, "-F implies POST");
+        assertEquals(BodyType.MULTIPART, q.bodyType);
+        assertEquals(5, q.multipart.size());
+        assertFalse(q.multipart.get(0).file);
+        assertEquals("Ann", q.multipart.get(0).value);
+        assertTrue(q.multipart.get(1).file);
+        assertEquals("/tmp/my pic.png", q.multipart.get(1).value);
+        assertEquals("/tmp/a;b.txt", q.multipart.get(2).value, "a quoted path keeps its semicolon");
+        assertFalse(q.multipart.get(3).file, "--form-string is always text");
+        assertEquals("@not a file", q.multipart.get(3).value);
+        assertTrue(q.multipart.get(4).file);
+        assertFalse(q.hasHeader("Content-Type"), "the boundary header is written when sending");
+        assertTrue(r.ignored().isEmpty(), r.ignored().toString());
+        assertTrue(r.warnings().stream().anyMatch(w -> w.contains("type=image/png")), r.warnings().toString());
+    }
+
+    @Test
+    void dataBinaryFromAFileBecomesAFileBody() throws Exception {
+        CurlParser.Result r = parse("curl -X PUT https://x.test/f --data-binary @/tmp/in.bin -H 'Content-Type: application/zip'");
+        assertEquals(BodyType.BINARY, r.request().bodyType);
+        assertEquals("/tmp/in.bin", r.request().bodyFile);
+        assertEquals("application/zip", r.request().header("Content-Type"));
+        assertEquals(HttpMethod.PUT, r.request().method);
+        assertEquals(BodyType.TEXT, parse("curl https://x.test --data-raw @literal -H 'Content-Type: text/plain'").request().bodyType,
+                "--data-raw never reads files");
+    }
 }

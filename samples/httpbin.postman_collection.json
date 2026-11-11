@@ -830,6 +830,122 @@
           "response": []
         }
       ]
+    },
+    {
+      "name": "8 · Capture, built-ins, uploads",
+      "item": [
+        {
+          "name": "Capture a value",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.set(\"sampleUuid\", pm.response.json()[\"uuid\"]);",
+                  "pm.environment.set(\"sampleType\", pm.response.headers.get(\"Content-Type\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/uuid",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "uuid"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Use the captured value",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/anything/{{sampleUuid}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "anything",
+                "{{sampleUuid}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Built-in variables",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"{{$guid}}\",\n  \"createdAt\": \"{{$isoTimestamp}}\",\n  \"seconds\": {{$timestamp}},\n  \"lucky\": {{$randomInt}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/post?requestId={{$guid}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "post"
+              ],
+              "query": [
+                {
+                  "key": "requestId",
+                  "value": "{{$guid}}"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Multipart form",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "title",
+                  "value": "Hello from {{username}}",
+                  "type": "text"
+                },
+                {
+                  "key": "note",
+                  "value": "Set a row's Type to File to upload a file",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/post",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "post"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
     }
   ],
   "variable": [
@@ -856,6 +972,11 @@
     {
       "key": "userId",
       "value": "7",
+      "type": "string"
+    },
+    {
+      "key": "sampleUuid",
+      "value": "send-Capture-a-value-first",
       "type": "string"
     },
     {

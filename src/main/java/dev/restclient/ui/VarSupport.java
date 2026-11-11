@@ -1,5 +1,6 @@
 package dev.restclient.ui;
 
+import dev.restclient.vars.DynamicVars;
 import dev.restclient.vars.VariableResolver;
 
 import javax.swing.AbstractAction;
@@ -214,6 +215,7 @@ public final class VarSupport {
                 if (t != null && shortcut && actions != null) {
                     e.consume();
                     hideNow();
+                    if (DynamicVars.isDynamic(t.name())) return;
                     if (resolver.get().isDefined(t.name())) actions.editVariable(t.name());
                     else actions.defineVariable(t.name());
                 } else {
@@ -459,7 +461,13 @@ public final class VarSupport {
         head.setAlignmentX(0f);
         box.add(head);
 
-        if (all.isEmpty()) {
+        if (DynamicVars.isDynamic(name)) {
+            head.add(new Ui.Pill("Built in", Theme::okBg, Theme::okFg), BorderLayout.EAST);
+            box.add(Ui.vgap(8));
+            JLabel msg = Ui.wrappingSecondary(DynamicVars.describe(name) + ". Each place it's used gets its own value.", 270);
+            msg.setAlignmentX(0f);
+            box.add(msg);
+        } else if (all.isEmpty()) {
             Ui.Pill pill = new Ui.Pill("Not defined", Theme::errBg, Theme::errFg);
             head.add(pill, BorderLayout.EAST);
             box.add(Ui.vgap(8));
@@ -569,7 +577,9 @@ public final class VarSupport {
         String p = prefix.toLowerCase(Locale.ROOT);
         List<String> starts = new ArrayList<>();
         List<String> contains = new ArrayList<>();
-        for (String n : resolver.get().names()) {
+        List<String> names = new ArrayList<>(resolver.get().names());
+        if (p.startsWith("$")) names.addAll(DynamicVars.names()); // built-ins only once "$" is typed
+        for (String n : names) {
             String l = n.toLowerCase(Locale.ROOT);
             if (l.startsWith(p)) starts.add(n);
             else if (l.contains(p)) contains.add(n);

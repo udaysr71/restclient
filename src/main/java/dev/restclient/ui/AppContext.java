@@ -100,6 +100,8 @@ public final class AppContext {
         if (VariableResolver.references(r.url, name) || VariableResolver.references(r.body, name)) return true;
         for (KeyValue kv : r.headers) if (VariableResolver.references(kv.key, name) || VariableResolver.references(kv.value, name)) return true;
         for (KeyValue kv : r.form) if (VariableResolver.references(kv.key, name) || VariableResolver.references(kv.value, name)) return true;
+        for (KeyValue kv : r.multipart) if (VariableResolver.references(kv.key, name) || VariableResolver.references(kv.value, name)) return true;
+        if (VariableResolver.references(r.bodyFile, name)) return true;
         Auth a = r.auth;
         return a != null && (VariableResolver.references(a.username, name) || VariableResolver.references(a.password, name)
                 || VariableResolver.references(a.token, name));

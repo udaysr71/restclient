@@ -85,6 +85,8 @@ public final class CurlParser {
         String method = null;
         String url = null;
         List<String> data = new ArrayList<>();
+        List<KeyValue> parts = new ArrayList<>();
+        String binaryFile = null;
         boolean dataGiven = false;
         boolean getMode = false;
         boolean head = false;
@@ -170,6 +172,11 @@ public final class CurlParser {
                 case "--header" -> addHeader(r, value);
                 case "--data", "--data-ascii", "--data-binary", "--data-raw" -> {
                     dataGiven = true;
+                    if (opt.equals("--data-binary") && value.startsWith("@") && value.length() > 1 && !value.equals("@-")
+                            && data.isEmpty() && binaryFile == null) {
+                        binaryFile = value.substring(1); // the file is sent as the body
+                        continue;
+                    }
                     if (!opt.equals("--data-raw") && value.startsWith("@")) {
                         warnings.add("File data (" + value + ") can't be read; the reference was kept as text.");
                     }
@@ -214,7 +221,8 @@ public final class CurlParser {
                 case "--get" -> getMode = true;
                 case "--head" -> head = true;
                 case "--compressed" -> ignored.add("--compressed (responses are decompressed automatically)");
-                case "--form" -> ignored.add("-F/--form \"" + value + "\" (multipart forms aren't supported)");
+                case "--form" -> parts.add(formPart(value, false, warnings));
+                case "--form-string" -> parts.add(formPart(value, true, warnings));
                 default -> {
                     if (IGNORED_WITH_VALUE.contains(opt)) {
                         ignored.add(opt + " " + value);
@@ -238,7 +246,7 @@ public final class CurlParser {
             m = HttpMethod.HEAD;
         } else if (getMode) {
             m = HttpMethod.GET;
-        } else if (dataGiven) {
+        } else if (dataGiven || !parts.isEmpty() || binaryFile != null) {
             m = HttpMethod.POST;
         } else {
             m = HttpMethod.GET;
@@ -258,7 +266,63 @@ public final class CurlParser {
             }
             applyBody(r, joined);
         }
+        if (!parts.isEmpty()) {
+            if (dataGiven) warnings.add("The command has both -d and -F; curl refuses that. The form was kept and the data dropped.");
+            r.bodyType = BodyType.MULTIPART;
+            r.body = "";
+            r.form = new ArrayList<>();
+            r.multipart = parts;
+            // curl writes this header itself, with the boundary
+            r.headers.removeIf(h -> h.key.equalsIgnoreCase("Content-Type") && h.value.toLowerCase(Locale.ROOT).startsWith("multipart/"));
+        } else if (binaryFile != null) {
+            if (dataGiven) {
+                warnings.add("Data given after --data-binary @" + binaryFile + " was dropped: a request sends one body.");
+                r.body = "";
+                r.form = new ArrayList<>();
+            }
+            r.bodyType = BodyType.BINARY;
+            r.bodyFile = binaryFile;
+            // curl's default for -d; the file's own type is a better guess
+            r.headers.removeIf(h -> h.key.equalsIgnoreCase("Content-Type") && h.value.toLowerCase(Locale.ROOT).contains("x-www-form-urlencoded"));
+        }
         return new Result(r, insecure, ignored, warnings);
+    }
+
+    /**
+     * -F forms: {@code name=text}, {@code name=@file} (upload), {@code name=<file} (the file's text as the value),
+     * each optionally followed by {@code ;type=…} or {@code ;filename=…}. --form-string takes the value literally.
+     */
+    private static KeyValue formPart(String v, boolean literal, List<String> warnings) {
+        int eq = v.indexOf('=');
+        if (eq < 0) return new KeyValue(v, "");
+        String name = v.substring(0, eq);
+        String value = v.substring(eq + 1);
+        if (literal) return new KeyValue(name, value);
+        boolean file = value.startsWith("@");
+        boolean fromFile = value.startsWith("<");
+        if (file || fromFile) value = value.substring(1);
+        String content;
+        String rest;
+        if (value.startsWith("\"")) { // quoted, with \" and \\ escaped
+            StringBuilder sb = new StringBuilder();
+            int k = 1;
+            while (k < value.length() && value.charAt(k) != '"') {
+                if (value.charAt(k) == '\\' && k + 1 < value.length()) k++;
+                sb.append(value.charAt(k++));
+            }
+            content = sb.toString();
+            rest = k + 1 <= value.length() ? value.substring(Math.min(value.length(), k + 1)) : "";
+        } else {
+            int semi = file || fromFile ? value.indexOf(';') : value.indexOf(";type=");
+            content = semi < 0 ? value : value.substring(0, semi);
+            rest = semi < 0 ? "" : value.substring(semi);
+        }
+        if (!rest.isBlank()) warnings.add("“" + rest.strip() + "” on the form field “" + name + "” was left out (the type comes from the file name).");
+        if (fromFile) {
+            warnings.add("-F " + name + "=<" + content + " sends the file's text as the value; it was imported as a file upload instead.");
+            file = true;
+        }
+        return file ? KeyValue.file(name, content, true) : new KeyValue(name, content);
     }
 
     private static void noteIgnored(String longName, String shown, List<String> ignored) {
@@ -273,7 +337,7 @@ public final class CurlParser {
         return switch (opt) {
             case "--request", "--url", "--header", "--data", "--data-ascii", "--data-binary", "--data-raw",
                  "--data-urlencode", "--json", "--user", "--oauth2-bearer", "--user-agent", "--referer",
-                 "--cookie", "--max-time", "--form" -> true;
+                 "--cookie", "--max-time", "--form", "--form-string" -> true;
             default -> IGNORED_WITH_VALUE.contains(opt);
         };
     }
